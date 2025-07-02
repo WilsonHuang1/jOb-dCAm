@@ -9,5 +9,6 @@ add_subdirectory(sample_hello_deptrum)
 if(${OpenCV_FOUND})
   add_subdirectory(sample_viewer)
   add_subdirectory(sample_lite)
+  add_subdirectory(distance_detection_test)
 endif(${OpenCV_FOUND})
 
