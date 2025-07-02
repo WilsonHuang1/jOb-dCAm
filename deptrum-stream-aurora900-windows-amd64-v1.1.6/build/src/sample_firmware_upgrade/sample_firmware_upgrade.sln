@@ -1,0 +1,73 @@
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 16
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "CMakePredefinedTargets", "CMakePredefinedTargets", "{ECDADF86-4184-3466-98AC-67779E467A38}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ALL_BUILD", "ALL_BUILD.vcxproj", "{77179923-08E7-3A23-8DCA-CB1F8167AD11}"
+	ProjectSection(ProjectDependencies) = postProject
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267} = {1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}
+		{73104840-714D-37EE-973C-D00076A8EA7E} = {73104840-714D-37EE-973C-D00076A8EA7E}
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "INSTALL", "INSTALL.vcxproj", "{DC7EC741-CC16-3957-8A55-DD84E7127B0F}"
+	ProjectSection(ProjectDependencies) = postProject
+		{77179923-08E7-3A23-8DCA-CB1F8167AD11} = {77179923-08E7-3A23-8DCA-CB1F8167AD11}
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267} = {1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ZERO_CHECK", "..\..\\ZERO_CHECK.vcxproj", "{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}"
+	ProjectSection(ProjectDependencies) = postProject
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "firmware_upgrade", "firmware_upgrade.vcxproj", "{73104840-714D-37EE-973C-D00076A8EA7E}"
+	ProjectSection(ProjectDependencies) = postProject
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267} = {1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+		MinSizeRel|x64 = MinSizeRel|x64
+		RelWithDebInfo|x64 = RelWithDebInfo|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{77179923-08E7-3A23-8DCA-CB1F8167AD11}.Debug|x64.ActiveCfg = Debug|x64
+		{77179923-08E7-3A23-8DCA-CB1F8167AD11}.Debug|x64.Build.0 = Debug|x64
+		{77179923-08E7-3A23-8DCA-CB1F8167AD11}.Release|x64.ActiveCfg = Release|x64
+		{77179923-08E7-3A23-8DCA-CB1F8167AD11}.Release|x64.Build.0 = Release|x64
+		{77179923-08E7-3A23-8DCA-CB1F8167AD11}.MinSizeRel|x64.ActiveCfg = MinSizeRel|x64
+		{77179923-08E7-3A23-8DCA-CB1F8167AD11}.MinSizeRel|x64.Build.0 = MinSizeRel|x64
+		{77179923-08E7-3A23-8DCA-CB1F8167AD11}.RelWithDebInfo|x64.ActiveCfg = RelWithDebInfo|x64
+		{77179923-08E7-3A23-8DCA-CB1F8167AD11}.RelWithDebInfo|x64.Build.0 = RelWithDebInfo|x64
+		{DC7EC741-CC16-3957-8A55-DD84E7127B0F}.Debug|x64.ActiveCfg = Debug|x64
+		{DC7EC741-CC16-3957-8A55-DD84E7127B0F}.Release|x64.ActiveCfg = Release|x64
+		{DC7EC741-CC16-3957-8A55-DD84E7127B0F}.MinSizeRel|x64.ActiveCfg = MinSizeRel|x64
+		{DC7EC741-CC16-3957-8A55-DD84E7127B0F}.RelWithDebInfo|x64.ActiveCfg = RelWithDebInfo|x64
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}.Debug|x64.ActiveCfg = Debug|x64
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}.Debug|x64.Build.0 = Debug|x64
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}.Release|x64.ActiveCfg = Release|x64
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}.Release|x64.Build.0 = Release|x64
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}.MinSizeRel|x64.ActiveCfg = MinSizeRel|x64
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}.MinSizeRel|x64.Build.0 = MinSizeRel|x64
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}.RelWithDebInfo|x64.ActiveCfg = RelWithDebInfo|x64
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267}.RelWithDebInfo|x64.Build.0 = RelWithDebInfo|x64
+		{73104840-714D-37EE-973C-D00076A8EA7E}.Debug|x64.ActiveCfg = Debug|x64
+		{73104840-714D-37EE-973C-D00076A8EA7E}.Debug|x64.Build.0 = Debug|x64
+		{73104840-714D-37EE-973C-D00076A8EA7E}.Release|x64.ActiveCfg = Release|x64
+		{73104840-714D-37EE-973C-D00076A8EA7E}.Release|x64.Build.0 = Release|x64
+		{73104840-714D-37EE-973C-D00076A8EA7E}.MinSizeRel|x64.ActiveCfg = MinSizeRel|x64
+		{73104840-714D-37EE-973C-D00076A8EA7E}.MinSizeRel|x64.Build.0 = MinSizeRel|x64
+		{73104840-714D-37EE-973C-D00076A8EA7E}.RelWithDebInfo|x64.ActiveCfg = RelWithDebInfo|x64
+		{73104840-714D-37EE-973C-D00076A8EA7E}.RelWithDebInfo|x64.Build.0 = RelWithDebInfo|x64
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{77179923-08E7-3A23-8DCA-CB1F8167AD11} = {ECDADF86-4184-3466-98AC-67779E467A38}
+		{DC7EC741-CC16-3957-8A55-DD84E7127B0F} = {ECDADF86-4184-3466-98AC-67779E467A38}
+		{1BCAA4F9-F5DA-3DBF-80B3-B0CAC631A267} = {ECDADF86-4184-3466-98AC-67779E467A38}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {407FE25D-5161-3C3E-BB94-82DD6EC2C285}
+	EndGlobalSection
+	GlobalSection(ExtensibilityAddIns) = postSolution
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,10 @@
+^C:\USERS\31110\DOWNLOADS\DEPTRUM-STREAM-AURORA900-WINDOWS-AMD64-V1.1.6\SAMPLES\SRC\SAMPLE_HELLO_DEPTRUM\CMAKELISTS.TXT
+setlocal
+C:\Users\31110\Downloads\cmake-3.16.0-rc1-win64-x64\bin\cmake.exe -SC:/Users/31110/Downloads/deptrum-stream-aurora900-windows-amd64-v1.1.6/samples -BC:/Users/31110/Downloads/deptrum-stream-aurora900-windows-amd64-v1.1.6/samples/build --check-stamp-file C:/Users/31110/Downloads/deptrum-stream-aurora900-windows-amd64-v1.1.6/samples/build/src/sample_hello_deptrum/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
