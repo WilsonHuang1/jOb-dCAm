@@ -1,9 +1,0 @@
-﻿  sample_helper.cc
-C:\Users\31110\Downloads\deptrum-stream-aurora900-windows-amd64-v1.1.6\samples\src\sample_helper.cc(1,1): warning C4819: The file contains a character that cannot be represented in the current code page (936). Save the file in Unicode format to prevent data loss
-  distance_detection_test.cc
-C:\Users\31110\Downloads\deptrum-stream-aurora900-windows-amd64-v1.1.6\samples\src\distance_detection_test\distance_detection_test.cc(102,50): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-  Generating code
-  Previous IPDB not found, fall back to full compilation.
-  All 1137 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
-  Finished generating code
-  distance_detection_test.vcxproj -> C:\Users\31110\Downloads\deptrum-stream-aurora900-windows-amd64-v1.1.6\samples\build\x64\Release\distance_detection_test.exe

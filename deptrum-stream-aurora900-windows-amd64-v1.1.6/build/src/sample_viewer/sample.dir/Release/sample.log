@@ -1,9 +1,0 @@
-﻿  Building Custom Rule C:/Users/31110/Downloads/deptrum-stream-aurora900-windows-amd64-v1.1.6/samples/src/sample_viewer/CMakeLists.txt
-  sample.cc
-C:\Users\31110\Downloads\deptrum-stream-aurora900-windows-amd64-v1.1.6\samples\src\sample_viewer\sample.cc(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
-C:\Users\31110\Downloads\deptrum-stream-aurora900-windows-amd64-v1.1.6\samples\src\viewer_helper.hpp(91,40): warning C4244: “参数”: 从“float”转换到“int”，可能丢失数据
-C:\Users\31110\Downloads\deptrum-stream-aurora900-windows-amd64-v1.1.6\samples\src\sample_viewer\sample.cc(277,13): warning C4101: “extrinsic”: 未引用的局部变量
-  sample_helper.cc
-C:\Users\31110\Downloads\deptrum-stream-aurora900-windows-amd64-v1.1.6\samples\src\sample_helper.cc(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
-  正在生成代码...
-  sample.vcxproj -> C:\Users\31110\Downloads\deptrum-stream-aurora900-windows-amd64-v1.1.6\samples\bin\Release\sample.exe
