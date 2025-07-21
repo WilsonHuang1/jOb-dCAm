@@ -1,0 +1,39 @@
+if(CMAKE_HOST_WIN32)
+  cmake_minimum_required(VERSION 3.19)
+else()
+  cmake_minimum_required(VERSION 3.5)
+endif()
+
+project(SimpleView_ImageRead)
+
+if(NOT CMAKE_BUILD_TYPE)
+	set(CMAKE_BUILD_TYPE release CACHE STRING "Build Type" FORCE)
+endif()
+
+set(CMAKE_CXX_STANDARD 14)
+
+set(Files ${PROJECT_SOURCE_DIR}/main.cpp)
+
+list(APPEND CMAKE_PREFIX_PATH "D:/Open3d/open3d-devel-windows-amd64-0.15.1")
+find_package(Open3D REQUIRED)
+
+if(CMAKE_CL_64)
+    set(MV3DRGBD_DEV_LIBRARIES $ENV{MV3DRGBD_DEV_ENV}/Libraries/win64)
+else(CMAKE_CL_64)
+    set(MV3DRGBD_DEV_LIBRARIES $ENV{MV3DRGBD_DEV_ENV}/Libraries/win32)
+endif(CMAKE_CL_64)
+
+
+set(MV3DRGBD_DEV_INCLUDE $ENV{MV3DRGBD_DEV_ENV}/Includes)
+set(MV3DRGBD_DEV_LIB "Mv3dRgbd.lib")
+include_directories(${MV3DRGBD_DEV_INCLUDE})
+include_directories(${Open3D_INCLUDE_DIRS})
+link_directories(${MV3DRGBD_DEV_LIBRARIES})
+add_executable(${PROJECT_NAME} ${Files})
+target_link_libraries(${PROJECT_NAME} PRIVATE ${MV3DRGBD_DEV_LIB} Open3D::Open3D)
+
+add_compile_definitions(NOMINMAX)
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+    "${Open3D_DIR}/../bin/Open3D.dll"
+    ${CMAKE_CURRENT_BINARY_DIR}/Release)
