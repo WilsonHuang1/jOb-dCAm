@@ -288,29 +288,28 @@ public:
         // Create depth matrix
         cv::Mat depthMat(imageData.nHeight, imageData.nWidth, CV_16UC1, imageData.pData);
 
-        // Create mask for valid depth values (non-zero and not invalid)
+        // Create mask for valid depth values (non-zero)
         cv::Mat validMask;
         cv::threshold(depthMat, validMask, 0, 255, cv::THRESH_BINARY);
         validMask.convertTo(validMask, CV_8UC1);
 
-        // Convert to 8-bit for display with INVERTED mapping (close=red, far=blue)
         cv::Mat depthDisplay;
         double minVal, maxVal;
         cv::minMaxLoc(depthMat, &minVal, &maxVal, nullptr, nullptr, validMask);
 
         if (maxVal > minVal && maxVal > 0) {
-            // INVERTED: closer objects (higher depth values) get higher intensity (255)
-            // farther objects (lower depth values) get lower intensity (0)
+            // INVERTED mapping: closer objects (higher depth values) = 255 (red)
+            // farther objects (lower depth values) = 0 (blue)
             depthMat.convertTo(depthDisplay, CV_8UC1, -255.0 / (maxVal - minVal), 255.0 * maxVal / (maxVal - minVal));
 
-            // Set invalid/unknown areas to 0 (will become black)
+            // Set invalid areas to 0 (will become black)
             depthDisplay.setTo(0, ~validMask);
         }
         else {
-            depthDisplay = cv::Mat::zeros(depthMat.rows, depthMat.cols, CV_8UC1);
+            depthDisplay = cv::Mat::zeros(imageData.nHeight, imageData.nWidth, CV_8UC1);
         }
 
-        // Apply INVERTED JET colormap: close=red (high values), far=blue (low values)
+        // Apply JET colormap: high values=red (close), low values=blue (far), 0=black (unknown)
         cv::Mat coloredDepth;
         cv::applyColorMap(depthDisplay, coloredDepth, cv::COLORMAP_JET);
 
@@ -396,7 +395,7 @@ public:
         g_imuData.getData(xAcc, yAcc, zAcc, xGyro, yGyro, zGyro, hasNewData);
 
         // Smaller info box - adjust these values to make it smaller
-        cv::Rect infoRect(10, 10, 200, 120);  // Reduced from 300x150 to 200x120
+        cv::Rect infoRect(10, 10, 80, 130);  // Reduced from 300x150 to 200x120
         cv::Mat overlay = image.clone();
         cv::rectangle(overlay, infoRect, cv::Scalar(0, 0, 0), cv::FILLED);
         cv::addWeighted(image, 0.7, overlay, 0.3, 0, image);
