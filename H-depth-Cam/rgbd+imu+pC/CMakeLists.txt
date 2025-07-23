@@ -107,10 +107,9 @@ endif()
 # REMOVED: This line was overwriting the correct MV3D_RGBD_LIBS
 # set(MV3D_RGBD_LIBS ${MV3D_RGBD_LIBRARY})
 
-# Set custom paths for OpenCV, Open3D, and Eigen
+# Set custom paths for OpenCV and Open3D
 set(OpenCV_DIR "C:/Users/31110/Downloads/open_Stuff/opencv/build")
 set(Open3D_DIR "C:/Users/31110/Downloads/open_Stuff/Open3D")
-set(Eigen3_DIR "C:/Users/31110/Downloads/open_Stuff/eigen/build")
 
 # Find OpenCV
 find_package(OpenCV REQUIRED PATHS ${OpenCV_DIR} NO_DEFAULT_PATH)
@@ -123,25 +122,6 @@ else()
     message(FATAL_ERROR "OpenCV not found at ${OpenCV_DIR}!")
 endif()
 
-# Find Eigen3
-# Note: Using manual detection due to path mismatch in Eigen3Config.cmake
-find_path(EIGEN3_INCLUDE_DIR
-    NAMES Eigen/Dense
-    PATHS C:/Users/31110/Downloads/open_Stuff/eigen
-          C:/Users/31110/Downloads/open_Stuff/eigen/Eigen
-          ${Eigen3_DIR}/../
-          ${Eigen3_DIR}/../include
-    NO_DEFAULT_PATH
-)
-
-if(EIGEN3_INCLUDE_DIR)
-    message(STATUS "Eigen3 found manually")
-    message(STATUS "Eigen3 include dir: ${EIGEN3_INCLUDE_DIR}")
-    set(EIGEN3_INCLUDE_DIRS ${EIGEN3_INCLUDE_DIR})
-    set(Eigen3_FOUND TRUE)
-else()
-    message(FATAL_ERROR "Eigen3 not found! Please check that Eigen headers are in C:/Users/31110/Downloads/open_Stuff/eigen/")
-endif()
 # Find Open3D
 find_package(Open3D REQUIRED PATHS ${Open3D_DIR} NO_DEFAULT_PATH)
 if(Open3D_FOUND)
@@ -185,7 +165,6 @@ endif()
 include_directories(
     ${OpenCV_INCLUDE_DIRS}
     ${OPEN3D_INCLUDE_DIRS}
-    ${EIGEN3_INCLUDE_DIRS}
 )
 
 # Include MV3D SDK headers if found
@@ -204,7 +183,7 @@ else()
     add_compile_options(-Wall -Wextra)
 endif()
 
-# Add executable - Updated for SLAM implementation
+# Add executable
 add_executable(rgbd_imu_pointcloud_viewer
     rgbd_imu_viewer.cpp
 )
@@ -214,13 +193,6 @@ target_link_libraries(rgbd_imu_pointcloud_viewer
     ${MV3D_RGBD_LIBS}
     ${OPENCV_LIBS}
 )
-
-# Eigen3 specific settings
-if(Eigen3_FOUND)
-    # Manual include (avoiding problematic Eigen3::Eigen target)
-    target_include_directories(rgbd_imu_pointcloud_viewer PRIVATE ${EIGEN3_INCLUDE_DIRS})
-    message(STATUS "Using manual Eigen3 include: ${EIGEN3_INCLUDE_DIRS}")
-endif()
 
 # Open3D specific settings
 if(Open3D_FOUND)
@@ -266,11 +238,6 @@ if(OpenCV_FOUND)
     message(STATUS "OpenCV libs: ${OpenCV_LIBS}")
 else()
     message(STATUS "OpenCV: Disabled")
-endif()
-if(Eigen3_FOUND)
-    message(STATUS "Eigen3 include dirs: ${EIGEN3_INCLUDE_DIRS}")
-else()
-    message(STATUS "Eigen3: Disabled")
 endif()
 if(Open3D_FOUND)
     message(STATUS "Open3D version: ${Open3D_VERSION}")
