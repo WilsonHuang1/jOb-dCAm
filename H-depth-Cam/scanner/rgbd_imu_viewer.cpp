@@ -5,26 +5,23 @@
 #include <iomanip>
 #include <sstream>
 #include <mutex>
-#include <memory>
-#include <thread>
-#include <deque>
-#include <fstream>
 
 // Include the actual MV3D RGBD SDK headers from the correct path
 #include "../common/common.hpp"
 #include "Mv3dRgbdAdvancedApi.h"
 #include "Mv3dRgbdAdvancedDefine.h"
 
-// OpenCV for image processing and feature detection
+// OpenCV for real-time display
 #include <opencv2/opencv.hpp>
 #include <opencv2/features2d.hpp>
+#include <opencv2/calib3d.hpp>
 
-// Open3D for point cloud visualization and processing
-#include <Open3D/Open3D.h>
-
-// Eigen for matrix operations
-#include <Eigen/Dense>
-#include <Eigen/Geometry>
+// SLAM additions
+#include <deque>
+#include <memory>
+#include <map>
+#include <algorithm>
+#include <random>
 
 #ifdef _WIN32
 #include <conio.h>
@@ -53,11 +50,10 @@ int KBHIT() {
 }
 #endif
 
-// SLAM Data Structures (following SLAMBOOK concepts)
+// Global IMU data structure with thread safety
 struct IMUData {
     float xAcc, yAcc, zAcc;
     float xGyro, yGyro, zGyro;
-    std::chrono::high_resolution_clock::time_point timestamp;
     std::mutex dataMutex;
     bool hasNewData;
 
@@ -67,7 +63,6 @@ struct IMUData {
         std::lock_guard<std::mutex> lock(dataMutex);
         xAcc = xa; yAcc = ya; zAcc = za;
         xGyro = xg; yGyro = yg; zGyro = zg;
-        timestamp = std::chrono::high_resolution_clock::now();
         hasNewData = true;
     }
 
@@ -78,40 +73,6 @@ struct IMUData {
         newData = hasNewData;
         hasNewData = false;
     }
-};
-
-struct SLAMPose {
-    Eigen::Vector3d translation;
-    Eigen::Quaterniond rotation;
-    double confidence;
-    std::chrono::high_resolution_clock::time_point timestamp;
-
-    SLAMPose() : translation(0, 0, 0), rotation(Eigen::Quaterniond::Identity()), confidence(1.0) {
-        timestamp = std::chrono::high_resolution_clock::now();
-    }
-
-    Eigen::Matrix4d toMatrix() const {
-        Eigen::Matrix4d pose = Eigen::Matrix4d::Identity();
-        pose.block<3, 3>(0, 0) = rotation.toRotationMatrix();
-        pose.block<3, 1>(0, 3) = translation;
-        return pose;
-    }
-
-    void fromMatrix(const Eigen::Matrix4d& matrix) {
-        translation = matrix.block<3, 1>(0, 3);
-        rotation = Eigen::Quaterniond(matrix.block<3, 3>(0, 0));
-    }
-};
-
-struct SLAMKeyframe {
-    int id;
-    cv::Mat rgb_image;
-    cv::Mat depth_image;
-    std::vector<cv::KeyPoint> keypoints;
-    cv::Mat descriptors;
-    std::shared_ptr<open3d::geometry::PointCloud> point_cloud;
-    SLAMPose pose;
-    std::chrono::high_resolution_clock::time_point timestamp;
 };
 
 // Global IMU data instance
@@ -129,7 +90,608 @@ void __stdcall IMUCallBackFunc(MV3D_RGBD_IMU_DATA* pstIMUData, void* pUser)
     }
 }
 
-class SLAMPointCloudAccumulator {
+// Enhanced SLAM structures
+struct KeyFrame {
+    int id;
+    cv::Mat rgb_image;
+    cv::Mat depth_image;
+    cv::Mat pose; // 4x4 transformation matrix
+    std::vector<cv::KeyPoint> keypoints;
+    cv::Mat descriptors;
+    std::vector<cv::Point3f> landmarks_3d; // 3D positions of features
+    double timestamp;
+
+    KeyFrame(int frame_id, const cv::Mat& rgb, const cv::Mat& depth, double ts)
+        : id(frame_id), rgb_image(rgb.clone()), depth_image(depth.clone()),
+        pose(cv::Mat::eye(4, 4, CV_64F)), timestamp(ts) {}
+};
+
+struct MapPoint {
+    int id;
+    cv::Point3f position;
+    cv::Vec3b color;
+    std::vector<std::pair<int, int>> observations; // (keyframe_id, keypoint_idx)
+    bool is_outlier = false;
+
+    MapPoint(int point_id, const cv::Point3f& pos, const cv::Vec3b& col)
+        : id(point_id), position(pos), color(col) {}
+};
+
+class EnhancedSLAM {
+private:
+    // Camera intrinsics
+    cv::Mat camera_matrix_;
+    cv::Mat dist_coeffs_;
+
+    // SLAM components
+    cv::Ptr<cv::ORB> feature_detector_;
+    cv::Ptr<cv::DescriptorMatcher> matcher_;
+
+    // Keyframe and map management
+    std::vector<std::shared_ptr<KeyFrame>> keyframes_;
+    std::map<int, std::shared_ptr<MapPoint>> map_points_;
+    std::shared_ptr<KeyFrame> current_keyframe_;
+    std::shared_ptr<KeyFrame> last_keyframe_;
+
+    // Pose tracking
+    cv::Mat current_pose_;
+    std::deque<cv::Mat> pose_history_;
+
+    // IMU integration
+    cv::Vec3f last_gyro_;
+    cv::Vec3f last_accel_;
+    double last_imu_timestamp_;
+    bool has_imu_data_;
+    cv::Mat imu_predicted_pose_;
+
+    // Parameters (relaxed for better visual-only tracking)
+    int next_keyframe_id_ = 0;
+    int next_mappoint_id_ = 0;
+    const int MAX_KEYFRAMES = 100;  // Increased from 50
+    const int MAX_POSE_HISTORY = 200; // Increased
+    const double KEYFRAME_DISTANCE_THRESHOLD = 0.1; // Much smaller for indoor use
+    const double KEYFRAME_ANGLE_THRESHOLD = 5.0; // Much smaller for better tracking
+
+    // Quality thresholds (very relaxed for robust tracking)
+    const int MIN_FEATURES = 30;   // Reduced from 50
+    const int MIN_MATCHES = 15;    // Reduced from 20  
+    const double MAX_REPROJECTION_ERROR = 5.0; // Increased tolerance
+
+public:
+    EnhancedSLAM() {
+        // Initialize feature detector with more features for better tracking
+        feature_detector_ = cv::ORB::create(
+            1500,           // More features
+            1.2f,           // scaleFactor
+            8,              // nlevels
+            31,             // edgeThreshold
+            0,              // firstLevel
+            2,              // WTA_K
+            cv::ORB::HARRIS_SCORE,
+            31,             // patchSize
+            10              // Lower fastThreshold for more features
+        );
+
+        matcher_ = cv::DescriptorMatcher::create("BruteForce-Hamming");
+        current_pose_ = cv::Mat::eye(4, 4, CV_64F);
+        imu_predicted_pose_ = cv::Mat::eye(4, 4, CV_64F);
+
+        // Initialize IMU data
+        last_gyro_ = cv::Vec3f(0, 0, 0);
+        last_accel_ = cv::Vec3f(0, 0, 0);
+        last_imu_timestamp_ = 0;
+        has_imu_data_ = false;
+
+        // DEFAULT camera intrinsics - REPLACE WITH YOUR CALIBRATED VALUES
+        SetCameraIntrinsics(735.749, 731.258, 617.785, 358.336);
+    }
+
+    // Add IMU data integration
+    void UpdateIMUData(const cv::Vec3f& gyro, const cv::Vec3f& accel, double timestamp) {
+        if (has_imu_data_) {
+            double dt = timestamp - last_imu_timestamp_;
+            if (dt > 0 && dt < 0.1) { // Valid time interval
+                PredictPoseFromIMU(gyro, accel, dt);
+            }
+        }
+
+        last_gyro_ = gyro;
+        last_accel_ = accel;
+        last_imu_timestamp_ = timestamp;
+        has_imu_data_ = true;
+    }
+
+    void PredictPoseFromIMU(const cv::Vec3f& gyro, const cv::Vec3f& accel, double dt) {
+        // Simple IMU integration for pose prediction
+        cv::Mat current_R = current_pose_(cv::Rect(0, 0, 3, 3));
+        cv::Mat current_t = current_pose_(cv::Rect(3, 0, 1, 3));
+
+        // Integrate gyroscope for rotation (simplified)
+        cv::Vec3f delta_rotation = (last_gyro_ + gyro) * 0.5f * static_cast<float>(dt);
+
+        // Create rotation matrix from gyro data
+        cv::Mat delta_R = cv::Mat::eye(3, 3, CV_64F);
+        if (cv::norm(delta_rotation) > 0.001) { // Avoid tiny rotations
+            cv::Mat rvec = (cv::Mat_<double>(3, 1) << delta_rotation[0], delta_rotation[1], delta_rotation[2]);
+            cv::Rodrigues(rvec, delta_R);
+        }
+
+        // Update predicted pose
+        cv::Mat predicted_R = current_R * delta_R;
+
+        // Simple integration for translation (gravity-corrected acceleration)
+        cv::Vec3f gravity_world(0, 0, 9.81f); // Assume Z-up coordinate system
+        cv::Vec3f accel_corrected = accel - gravity_world;
+        cv::Vec3f delta_translation = accel_corrected * static_cast<float>(dt * dt * 0.5);
+
+        cv::Mat predicted_t = current_t + current_R * (cv::Mat_<double>(3, 1) <<
+            delta_translation[0], delta_translation[1], delta_translation[2]);
+
+        // Update IMU predicted pose
+        predicted_R.copyTo(imu_predicted_pose_(cv::Rect(0, 0, 3, 3)));
+        predicted_t.copyTo(imu_predicted_pose_(cv::Rect(3, 0, 1, 3)));
+    }
+
+    void SetCameraIntrinsics(double fx, double fy, double cx, double cy) {
+        camera_matrix_ = (cv::Mat_<double>(3, 3) <<
+            fx, 0, cx,
+            0, fy, cy,
+            0, 0, 1);
+        dist_coeffs_ = cv::Mat::zeros(4, 1, CV_64F);
+    }
+
+    // Main SLAM processing function
+    bool ProcessFrame(const cv::Mat& rgb_frame, const cv::Mat& depth_frame, double timestamp) {
+        if (rgb_frame.empty() || depth_frame.empty()) {
+            return false;
+        }
+
+        // Create new keyframe candidate
+        auto candidate_kf = std::make_shared<KeyFrame>(
+            next_keyframe_id_, rgb_frame, depth_frame, timestamp);
+
+        // Extract features
+        if (!ExtractFeatures(candidate_kf)) {
+            return false;
+        }
+
+        bool success = false;
+
+        if (keyframes_.empty()) {
+            // First frame - initialize SLAM
+            success = InitializeSLAM(candidate_kf);
+        }
+        else {
+            // Track camera pose
+            success = TrackPose(candidate_kf);
+
+            // Decide if we need a new keyframe
+            if (success && ShouldCreateKeyframe(candidate_kf)) {
+                AddKeyframe(candidate_kf);
+                TriangulateNewPoints();
+                OptimizeLocalMap();
+            }
+        }
+
+        if (success) {
+            current_keyframe_ = candidate_kf;
+            pose_history_.push_back(current_pose_.clone());
+            if (pose_history_.size() > MAX_POSE_HISTORY) {
+                pose_history_.pop_front();
+            }
+        }
+
+        return success;
+    }
+
+private:
+    bool ExtractFeatures(std::shared_ptr<KeyFrame> kf) {
+        cv::Mat gray;
+        if (kf->rgb_image.channels() == 3) {
+            cv::cvtColor(kf->rgb_image, gray, cv::COLOR_BGR2GRAY);
+        }
+        else {
+            gray = kf->rgb_image;
+        }
+
+        feature_detector_->detectAndCompute(gray, cv::Mat(),
+            kf->keypoints, kf->descriptors);
+
+        if (kf->keypoints.size() < MIN_FEATURES) {
+            return false;
+        }
+
+        // Convert 2D features to 3D using depth
+        ConvertFeaturesToLandmarks(kf);
+
+        return true;
+    }
+
+    void ConvertFeaturesToLandmarks(std::shared_ptr<KeyFrame> kf) {
+        kf->landmarks_3d.clear();
+
+        for (const auto& kp : kf->keypoints) {
+            cv::Point3f landmark_3d = GetPoint3D(kp.pt, kf->depth_image);
+            kf->landmarks_3d.push_back(landmark_3d);
+        }
+    }
+
+    cv::Point3f GetPoint3D(const cv::Point2f& pixel, const cv::Mat& depth_image) {
+        int x = static_cast<int>(pixel.x);
+        int y = static_cast<int>(pixel.y);
+
+        if (x < 0 || x >= depth_image.cols || y < 0 || y >= depth_image.rows) {
+            return cv::Point3f(0, 0, 0);
+        }
+
+        float depth = depth_image.at<uint16_t>(y, x) / 1000.0f; // Convert mm to meters
+
+        if (depth <= 0.1f || depth > 10.0f) {
+            return cv::Point3f(0, 0, 0);
+        }
+
+        // Convert to 3D using camera intrinsics
+        double fx = camera_matrix_.at<double>(0, 0);
+        double fy = camera_matrix_.at<double>(1, 1);
+        double cx = camera_matrix_.at<double>(0, 2);
+        double cy = camera_matrix_.at<double>(1, 2);
+
+        float x3d = static_cast<float>((pixel.x - cx) * depth / fx);
+        float y3d = static_cast<float>((pixel.y - cy) * depth / fy);
+
+        return cv::Point3f(x3d, y3d, depth);
+    }
+
+    bool InitializeSLAM(std::shared_ptr<KeyFrame> first_kf) {
+        first_kf->pose = cv::Mat::eye(4, 4, CV_64F);
+        current_pose_ = first_kf->pose.clone();
+
+        AddKeyframe(first_kf);
+
+        // Create initial map points
+        for (size_t i = 0; i < first_kf->keypoints.size(); ++i) {
+            if (first_kf->landmarks_3d[i].z > 0.1f) {
+                auto map_point = std::make_shared<MapPoint>(
+                    next_mappoint_id_++,
+                    first_kf->landmarks_3d[i],
+                    cv::Vec3b(255, 255, 255)
+                    );
+                map_point->observations.push_back({ first_kf->id, static_cast<int>(i) });
+                map_points_[map_point->id] = map_point;
+            }
+        }
+
+        return true;
+    }
+
+    bool TrackPose(std::shared_ptr<KeyFrame> current_kf) {
+        if (!last_keyframe_) {
+            return false;
+        }
+
+        // Use IMU prediction as initial guess if available
+        if (has_imu_data_) {
+            current_kf->pose = imu_predicted_pose_.clone();
+        }
+        else {
+            current_kf->pose = last_keyframe_->pose.clone();
+        }
+
+        // Match features between current and last keyframe
+        std::vector<cv::DMatch> matches;
+        matcher_->match(last_keyframe_->descriptors, current_kf->descriptors, matches);
+
+        // Filter matches
+        std::vector<cv::DMatch> good_matches;
+        FilterMatches(matches, good_matches);
+
+        if (good_matches.size() < MIN_MATCHES) {
+            // If visual tracking fails but we have IMU, use IMU prediction
+            if (has_imu_data_) {
+                current_pose_ = imu_predicted_pose_.clone();
+                current_kf->pose = current_pose_.clone();
+                return true; // Accept IMU-only tracking
+            }
+            return false;
+        }
+
+        // Use PnP to refine pose estimate
+        return SolvePnP(current_kf, good_matches);
+    }
+
+    void FilterMatches(const std::vector<cv::DMatch>& matches,
+        std::vector<cv::DMatch>& good_matches) {
+        if (matches.empty()) return;
+
+        float min_dist = matches[0].distance;
+        for (const auto& match : matches) {
+            min_dist = std::min(min_dist, match.distance);
+        }
+
+        float threshold = std::max(2.0f * min_dist, 30.0f);
+
+        for (const auto& match : matches) {
+            if (match.distance <= threshold) {
+                good_matches.push_back(match);
+            }
+        }
+    }
+
+    bool SolvePnP(std::shared_ptr<KeyFrame> current_kf,
+        const std::vector<cv::DMatch>& matches) {
+        std::vector<cv::Point3f> object_points;
+        std::vector<cv::Point2f> image_points;
+
+        for (const auto& match : matches) {
+            int last_idx = match.queryIdx;
+            int curr_idx = match.trainIdx;
+
+            cv::Point3f point_3d = last_keyframe_->landmarks_3d[last_idx];
+            if (point_3d.z > 0.1f) {
+                object_points.push_back(point_3d);
+                image_points.push_back(current_kf->keypoints[curr_idx].pt);
+            }
+        }
+
+        if (object_points.size() < 6) {
+            return false;
+        }
+
+        cv::Mat rvec, tvec;
+        std::vector<int> inliers;
+
+        bool success = cv::solvePnPRansac(
+            object_points, image_points,
+            camera_matrix_, dist_coeffs_,
+            rvec, tvec, false, 100, MAX_REPROJECTION_ERROR, 0.99, inliers
+        );
+
+        if (!success || inliers.size() < MIN_MATCHES) {
+            return false;
+        }
+
+        cv::Mat R;
+        cv::Rodrigues(rvec, R);
+
+        cv::Mat pose = cv::Mat::eye(4, 4, CV_64F);
+        R.copyTo(pose(cv::Rect(0, 0, 3, 3)));
+        tvec.copyTo(pose(cv::Rect(3, 0, 1, 3)));
+
+        current_pose_ = last_keyframe_->pose * pose;
+        current_kf->pose = current_pose_.clone();
+
+        return true;
+    }
+
+    bool ShouldCreateKeyframe(std::shared_ptr<KeyFrame> candidate_kf) {
+        if (!last_keyframe_) {
+            return true;
+        }
+
+        // Check translation distance
+        cv::Mat last_pos = last_keyframe_->pose(cv::Rect(3, 0, 1, 3));
+        cv::Mat curr_pos = candidate_kf->pose(cv::Rect(3, 0, 1, 3));
+        double translation = cv::norm(curr_pos - last_pos);
+
+        if (translation > KEYFRAME_DISTANCE_THRESHOLD) {
+            return true;
+        }
+
+        // Check rotation angle
+        cv::Mat last_R = last_keyframe_->pose(cv::Rect(0, 0, 3, 3));
+        cv::Mat curr_R = candidate_kf->pose(cv::Rect(0, 0, 3, 3));
+        cv::Mat delta_R = curr_R * last_R.t();
+
+        double trace = delta_R.at<double>(0, 0) + delta_R.at<double>(1, 1) + delta_R.at<double>(2, 2);
+        double angle = std::acos(std::max(-1.0, std::min(1.0, (trace - 1.0) / 2.0))) * 180.0 / CV_PI;
+
+        if (angle > KEYFRAME_ANGLE_THRESHOLD) {
+            return true;
+        }
+
+        // Also create keyframe if we have enough new features
+        int shared_features = 0;
+        std::vector<cv::DMatch> matches;
+        matcher_->match(last_keyframe_->descriptors, candidate_kf->descriptors, matches);
+        for (const auto& match : matches) {
+            if (match.distance < 50) shared_features++;
+        }
+
+        // If less than 70% features are shared, create new keyframe
+        double feature_overlap = static_cast<double>(shared_features) / std::min(static_cast<double>(last_keyframe_->keypoints.size()), static_cast<double>(candidate_kf->keypoints.size()));
+        if (feature_overlap < 0.7) {
+            return true;
+        }
+
+        return false;
+    }
+
+    void AddKeyframe(std::shared_ptr<KeyFrame> kf) {
+        kf->id = next_keyframe_id_++;
+        keyframes_.push_back(kf);
+        last_keyframe_ = kf;
+
+        // Don't limit keyframes as aggressively - keep more for better tracking
+        if (keyframes_.size() > MAX_KEYFRAMES) {
+            // Remove oldest keyframe but keep more keyframes around
+            auto oldest_kf = keyframes_.front();
+            keyframes_.erase(keyframes_.begin());
+            // Don't remove map points as aggressively
+            // RemoveMapPointsFromKeyframe(oldest_kf->id);
+        }
+
+        std::cout << "Added keyframe " << kf->id << " (total: " << keyframes_.size() << ")" << std::endl;
+    }
+
+    void RemoveMapPointsFromKeyframe(int keyframe_id) {
+        auto it = map_points_.begin();
+        while (it != map_points_.end()) {
+            auto& observations = it->second->observations;
+            observations.erase(
+                std::remove_if(observations.begin(), observations.end(),
+                    [keyframe_id](const std::pair<int, int>& obs) {
+                        return obs.first == keyframe_id;
+                    }),
+                observations.end()
+                        );
+
+            if (observations.empty()) {
+                it = map_points_.erase(it);
+            }
+            else {
+                ++it;
+            }
+        }
+    }
+
+    void TriangulateNewPoints() {
+        if (keyframes_.size() < 2) return;
+
+        auto kf1 = keyframes_[keyframes_.size() - 2];
+        auto kf2 = keyframes_[keyframes_.size() - 1];
+
+        std::vector<cv::DMatch> matches;
+        matcher_->match(kf1->descriptors, kf2->descriptors, matches);
+
+        std::vector<cv::DMatch> good_matches;
+        FilterMatches(matches, good_matches);
+
+        for (const auto& match : good_matches) {
+            int idx1 = match.queryIdx;
+            int idx2 = match.trainIdx;
+
+            bool exists = false;
+            for (const auto& [mp_id, mp] : map_points_) {
+                for (const auto& obs : mp->observations) {
+                    if ((obs.first == kf1->id && obs.second == idx1) ||
+                        (obs.first == kf2->id && obs.second == idx2)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (exists) break;
+            }
+
+            if (!exists) {
+                cv::Point3f point_3d = kf2->landmarks_3d[idx2];
+                if (point_3d.z > 0.1f) {
+                    auto map_point = std::make_shared<MapPoint>(
+                        next_mappoint_id_++, point_3d, cv::Vec3b(255, 255, 255));
+                    map_point->observations.push_back({ kf1->id, idx1 });
+                    map_point->observations.push_back({ kf2->id, idx2 });
+                    map_points_[map_point->id] = map_point;
+                }
+            }
+        }
+    }
+
+    void OptimizeLocalMap() {
+        if (keyframes_.size() < 3) return;
+
+        int window_size = std::min(5, static_cast<int>(keyframes_.size()));
+        std::vector<std::shared_ptr<KeyFrame>> local_keyframes(
+            keyframes_.end() - window_size, keyframes_.end());
+
+        std::set<int> local_map_point_ids;
+        for (const auto& kf : local_keyframes) {
+            for (const auto& [mp_id, mp] : map_points_) {
+                for (const auto& obs : mp->observations) {
+                    if (obs.first == kf->id) {
+                        local_map_point_ids.insert(mp_id);
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (auto& kf : local_keyframes) {
+            std::vector<cv::Point3f> object_points;
+            std::vector<cv::Point2f> image_points;
+
+            for (int mp_id : local_map_point_ids) {
+                auto mp = map_points_[mp_id];
+                for (const auto& obs : mp->observations) {
+                    if (obs.first == kf->id) {
+                        object_points.push_back(mp->position);
+                        image_points.push_back(kf->keypoints[obs.second].pt);
+                        break;
+                    }
+                }
+            }
+
+            if (object_points.size() >= 6) {
+                cv::Mat rvec, tvec;
+                cv::solvePnP(object_points, image_points,
+                    camera_matrix_, dist_coeffs_, rvec, tvec);
+
+                cv::Mat R;
+                cv::Rodrigues(rvec, R);
+                R.copyTo(kf->pose(cv::Rect(0, 0, 3, 3)));
+                tvec.copyTo(kf->pose(cv::Rect(3, 0, 1, 3)));
+            }
+        }
+    }
+
+public:
+    // Getter functions
+    cv::Mat GetCurrentPose() const {
+        return current_pose_.clone();
+    }
+
+    std::vector<cv::Point3f> GetMapPoints() const {
+        std::vector<cv::Point3f> points;
+        for (const auto& [id, mp] : map_points_) {
+            if (!mp->is_outlier) {
+                points.push_back(mp->position);
+            }
+        }
+        return points;
+    }
+
+    std::vector<cv::Mat> GetTrajectory() const {
+        std::vector<cv::Mat> trajectory;
+        for (const auto& kf : keyframes_) {
+            trajectory.push_back(kf->pose.clone());
+        }
+        return trajectory;
+    }
+
+    void GetPoseComponents(cv::Vec3d& translation, cv::Vec3d& rotation) const {
+        cv::Mat t = current_pose_(cv::Rect(3, 0, 1, 3));
+        cv::Mat R = current_pose_(cv::Rect(0, 0, 3, 3));
+
+        translation = cv::Vec3d(t.at<double>(0), t.at<double>(1), t.at<double>(2));
+
+        cv::Mat rvec;
+        cv::Rodrigues(R, rvec);
+        rotation = cv::Vec3d(rvec.at<double>(0), rvec.at<double>(1), rvec.at<double>(2));
+    }
+
+    bool IsInitialized() const {
+        return !keyframes_.empty();
+    }
+
+    int GetNumKeyframes() const {
+        return static_cast<int>(keyframes_.size());
+    }
+
+    int GetNumMapPoints() const {
+        return static_cast<int>(map_points_.size());
+    }
+
+    void Reset() {
+        keyframes_.clear();
+        map_points_.clear();
+        current_keyframe_.reset();
+        last_keyframe_.reset();
+        current_pose_ = cv::Mat::eye(4, 4, CV_64F);
+        pose_history_.clear();
+        next_keyframe_id_ = 0;
+        next_mappoint_id_ = 0;
+    }
+};
+
+class RGBDIRViewer {
 private:
     void* m_handle;
     bool m_bDeviceOpen;
@@ -147,214 +709,120 @@ private:
     int m_selectedResolution;
 
     // SLAM components
-    open3d::camera::PinholeCameraIntrinsic m_intrinsics;
-    bool m_intrinsicsInitialized;
-    
-    // SLAM state
-    std::deque<SLAMKeyframe> m_keyframes;
-    std::shared_ptr<open3d::geometry::PointCloud> m_globalMap;
-    SLAMPose m_currentPose;
-    
-    // Visual odometry
-    cv::Ptr<cv::ORB> m_orb_detector;
-    cv::Ptr<cv::BFMatcher> m_matcher;
-    
-    // Point cloud parameters
-    float m_depthScale;
-    float m_maxDepth;
-    double m_voxelSize;
-    
-    // Visualization
-    std::shared_ptr<open3d::visualization::Visualizer> m_mapVisualizer;
-    std::shared_ptr<open3d::visualization::Visualizer> m_liveVisualizer;
-    std::mutex m_mapMutex;
-    bool m_showLivePointCloud;
-    bool m_showAccumulatedMap;
-    
-    // SLAM parameters
-    int m_maxKeyframes;
-    double m_keyframeDistanceThreshold;  // meters
-    double m_keyframeAngleThreshold;     // radians
-    int m_minFeatureMatches;
-    
-    // IMU integration (simplified VIO)
-    std::deque<IMUData> m_imuBuffer;
-    std::chrono::high_resolution_clock::time_point m_lastImuTime;
-    bool m_useIMUPrediction;
+    EnhancedSLAM slam_system_;
+    bool slam_initialized_;
+    std::chrono::high_resolution_clock::time_point last_slam_time_;
+    std::vector<cv::Point3f> trajectory_points_;
+    std::vector<cv::Point3f> map_points_;
 
 public:
-    SLAMPointCloudAccumulator() : 
-        m_handle(nullptr), 
-        m_bDeviceOpen(false), 
-        m_bGrabbing(false), 
-        m_frameCount(0), 
-        m_selectedResolution(0),
-        m_intrinsicsInitialized(false),
-        m_depthScale(1000.0f),
-        m_maxDepth(4.0f),
-        m_voxelSize(0.02),  // 2cm voxels
-        m_showLivePointCloud(true),
-        m_showAccumulatedMap(true),
-        m_maxKeyframes(50),
-        m_keyframeDistanceThreshold(0.3),  // 30cm
-        m_keyframeAngleThreshold(0.3),     // ~17 degrees
-        m_minFeatureMatches(50),
-        m_useIMUPrediction(true)
-    {
-        // Initialize available display resolutions
+    RGBDIRViewer() : m_handle(nullptr), m_bDeviceOpen(false), m_bGrabbing(false),
+        m_frameCount(0), m_selectedResolution(0), slam_initialized_(false) {
+        // Initialize available display resolutions - all 16:9 aspect ratio
         m_resolutions = {
-            {426, 240, "426x240 (16:9 Small)"},
-            {640, 360, "640x360 (16:9 Medium)"},
-            {854, 480, "854x480 (16:9 480p)"},
-            {1280, 720, "1280x720 (16:9 720p HD)"},
-            {1920, 1080, "1920x1080 (16:9 1080p Full HD)"},
-            {-1, -1, "Original Size (No Resize)"}
+            {640, 360, "640x360 (16:9)"},
+            {854, 480, "854x480 (16:9)"},
+            {960, 540, "960x540 (16:9)"},
+            {1280, 720, "1280x720 (16:9) - HD"},
+            {1920, 1080, "1920x1080 (16:9) - Full HD"}
         };
-        
-        m_globalMap = std::make_shared<open3d::geometry::PointCloud>();
-        
-        // Initialize ORB detector for visual odometry
-        m_orb_detector = cv::ORB::create(1000);  // 1000 features
-        m_matcher = cv::BFMatcher::create(cv::NORM_HAMMING, true);
-        
-        m_lastImuTime = std::chrono::high_resolution_clock::now();
+
+        // Initialize SLAM with YOUR ACTUAL CALIBRATED VALUES
+        last_slam_time_ = std::chrono::high_resolution_clock::now();
+
+        // YOUR CALIBRATED CAMERA PARAMETERS - REPLACE THE DEFAULTS
+        slam_system_.SetCameraIntrinsics(735.749, 731.258, 617.785, 358.336);
+
+        std::cout << "SLAM system initialized with calibrated camera parameters:" << std::endl;
+        std::cout << "fx=735.749, fy=731.258, cx=617.785, cy=358.336" << std::endl;
     }
 
-    ~SLAMPointCloudAccumulator() {
+    ~RGBDIRViewer() {
         if (m_bGrabbing) {
             StopGrabbing();
         }
         if (m_bDeviceOpen) {
             CloseDevice();
         }
-        if (m_mapVisualizer) {
-            m_mapVisualizer->DestroyVisualizerWindow();
-        }
-        if (m_liveVisualizer) {
-            m_liveVisualizer->DestroyVisualizerWindow();
-        }
-        MV3D_RGBD_Release();
-        cv::destroyAllWindows();
     }
 
-    int SelectSLAMParameters() {
-        std::cout << "\n=== SLAM Point Cloud Accumulator Configuration ===" << std::endl;
-        
-        // Display resolution selection
-        std::cout << "Choose the display resolution for the viewer windows:" << std::endl;
-        for (int i = 0; i < static_cast<int>(m_resolutions.size()); i++) {
-            std::cout << "[" << i << "] " << m_resolutions[i].name << std::endl;
+    int SelectDisplayResolution() {
+        std::cout << "\nSelect display resolution:" << std::endl;
+        for (size_t i = 0; i < m_resolutions.size(); i++) {
+            std::cout << i << ": " << m_resolutions[i].name << std::endl;
         }
 
-        std::cout << "\nEnter your choice (0-" << (m_resolutions.size() - 1) << "): ";
-        int choice;
-        std::cin >> choice;
+        std::cout << "Enter selection (0-" << (m_resolutions.size() - 1) << "): ";
+        int selection;
+        std::cin >> selection;
 
-        if (choice >= 0 && choice < static_cast<int>(m_resolutions.size())) {
-            m_selectedResolution = choice;
-            std::cout << "Selected: " << m_resolutions[choice].name << std::endl;
-        } else {
-            std::cerr << "Invalid choice!" << std::endl;
+        if (selection >= 0 && selection < static_cast<int>(m_resolutions.size())) {
+            m_selectedResolution = selection;
+            std::cout << "Selected: " << m_resolutions[m_selectedResolution].name << std::endl;
+            return MV3D_RGBD_OK;
+        }
+        else {
+            std::cerr << "Invalid selection! Using default resolution." << std::endl;
+            m_selectedResolution = 0;
             return MV3D_RGBD_E_PARAMETER;
         }
-
-        // SLAM configuration
-        char enableLive, enableMap, useIMU, fastMode;
-        std::cout << "\n=== SLAM Configuration ===" << std::endl;
-        std::cout << "Show live point cloud? (y/n): ";
-        std::cin >> enableLive;
-        m_showLivePointCloud = (enableLive == 'y' || enableLive == 'Y');
-
-        std::cout << "Show accumulated SLAM map? (y/n): ";
-        std::cin >> enableMap;
-        m_showAccumulatedMap = (enableMap == 'y' || enableMap == 'Y');
-
-        std::cout << "Use IMU for motion prediction? (y/n): ";
-        std::cin >> useIMU;
-        m_useIMUPrediction = (useIMU == 'y' || useIMU == 'Y');
-
-        std::cout << "Enable fast mode (better FPS, less accuracy)? (y/n): ";
-        std::cin >> fastMode;
-        bool fastModeEnabled = (fastMode == 'y' || fastMode == 'Y');
-        
-        if (fastModeEnabled) {
-            // Optimize for speed
-            m_voxelSize = 0.05;           // Larger voxels (5cm instead of 2cm)
-            m_maxKeyframes = 20;          // Fewer keyframes
-            m_keyframeDistanceThreshold = 0.5;  // Larger distance threshold (50cm)
-            m_minFeatureMatches = 30;     // Fewer required matches
-            std::cout << "Fast mode enabled: Larger voxels, fewer keyframes for better FPS" << std::endl;
-        }
-
-        std::cout << "\n=== SLAM Parameters ===" << std::endl;
-        std::cout << "Max keyframes: " << m_maxKeyframes << std::endl;
-        std::cout << "Keyframe distance threshold: " << m_keyframeDistanceThreshold << "m" << std::endl;
-        std::cout << "Voxel size for downsampling: " << m_voxelSize << "m" << std::endl;
-        std::cout << "Using " << (m_useIMUPrediction ? "Visual-Inertial" : "Visual-only") << " odometry" << std::endl;
-
-        return MV3D_RGBD_OK;
     }
 
     int Initialize() {
         int nRet = MV3D_RGBD_Initialize();
         if (MV3D_RGBD_OK != nRet) {
-            std::cerr << "Failed to initialize SDK: " << nRet << std::endl;
+            std::cerr << "MV3D_RGBD_Initialize failed! Error: 0x" << std::hex << nRet << std::endl;
             return nRet;
         }
-
-        // Get SDK version
-        MV3D_RGBD_VERSION_INFO stVersion;
-        nRet = MV3D_RGBD_GetSDKVersion(&stVersion);
-        if (MV3D_RGBD_OK == nRet) {
-            std::cout << "SDK Version: " << stVersion.nMajor << "." << stVersion.nMinor << "." << stVersion.nRevision << std::endl;
-        }
-
+        std::cout << "SDK initialized successfully." << std::endl;
         return MV3D_RGBD_OK;
     }
 
     int EnumerateDevices(std::vector<MV3D_RGBD_DEVICE_INFO>& deviceList) {
+        deviceList.clear();
+
+        // Get device number first
         unsigned int nDevNum = 0;
         int nRet = MV3D_RGBD_GetDeviceNumber(DeviceType_Ethernet | DeviceType_USB, &nDevNum);
-        if (MV3D_RGBD_OK != nRet || nDevNum == 0) {
-            std::cerr << "No devices found!" << std::endl;
+        if (MV3D_RGBD_OK != nRet) {
+            std::cerr << "MV3D_RGBD_GetDeviceNumber failed! Error: 0x" << std::hex << nRet << std::endl;
             return nRet;
         }
 
+        if (nDevNum == 0) {
+            std::cerr << "No devices found!" << std::endl;
+            return MV3D_RGBD_E_NODATA;
+        }
+
+        std::cout << "Found " << nDevNum << " device(s):" << std::endl;
+
+        // Get device list
         deviceList.resize(nDevNum);
         nRet = MV3D_RGBD_GetDeviceList(DeviceType_Ethernet | DeviceType_USB, &deviceList[0], nDevNum, &nDevNum);
         if (MV3D_RGBD_OK != nRet) {
-            std::cerr << "Failed to get device list!" << std::endl;
+            std::cerr << "MV3D_RGBD_GetDeviceList failed! Error: 0x" << std::hex << nRet << std::endl;
             return nRet;
         }
 
-        std::cout << "\nFound " << nDevNum << " device(s):" << std::endl;
         for (unsigned int i = 0; i < nDevNum; i++) {
-            if (DeviceType_Ethernet == deviceList[i].enDeviceType) {
-                std::cout << "[" << i << "] Serial: " << deviceList[i].chSerialNumber
-                    << " IP: " << deviceList[i].SpecialInfo.stNetInfo.chCurrentIp
-                    << " Model: " << deviceList[i].chModelName << std::endl;
-            }
-            else if (DeviceType_USB == deviceList[i].enDeviceType) {
-                std::cout << "[" << i << "] Serial: " << deviceList[i].chSerialNumber
-                    << " USB Protocol: " << deviceList[i].SpecialInfo.stUsbInfo.enUsbProtocol
-                    << " Model: " << deviceList[i].chModelName << std::endl;
-            }
+            std::cout << "[" << i << "] Model: " << deviceList[i].chModelName
+                << ", SN: " << deviceList[i].chSerialNumber << std::endl;
         }
 
         return MV3D_RGBD_OK;
     }
 
     int OpenDevice(const MV3D_RGBD_DEVICE_INFO& deviceInfo) {
-        MV3D_RGBD_DEVICE_INFO deviceInfoCopy = deviceInfo;
-        int nRet = MV3D_RGBD_OpenDevice(&m_handle, &deviceInfoCopy);
+        int nRet = MV3D_RGBD_OpenDevice(&m_handle, const_cast<MV3D_RGBD_DEVICE_INFO*>(&deviceInfo));
         if (MV3D_RGBD_OK != nRet) {
-            std::cerr << "Failed to open device: " << nRet << std::endl;
+            std::cerr << "MV3D_RGBD_OpenDevice failed! Error: 0x" << std::hex << nRet << std::endl;
             return nRet;
         }
 
         m_bDeviceOpen = true;
+        std::cout << "Device opened successfully." << std::endl;
 
-        // Setup IMU callback
+        // Register IMU callback - following your working IMU code pattern
         MV3D_RGBD_PARAM stParam;
         stParam.enParamType = ParamType_Enum;
         stParam.ParamInfo.stEnumParam.nCurValue = 1;
@@ -362,113 +830,56 @@ public:
         if (MV3D_RGBD_OK == nRet) {
             nRet = MV3D_RGBD_RegisterIMUDataCallBack(m_handle, IMUCallBackFunc, m_handle);
             if (MV3D_RGBD_OK == nRet) {
-                std::cout << "IMU callback registered successfully" << std::endl;
+                std::cout << "IMU callback registered successfully." << std::endl;
+
+                // Try different IMU parameter names - your camera might use different ones
+                const char* imu_params[] = { "IMUEnable", "ImuEnable", "IMU_Enable", "EventSelector" };
+                bool imu_enabled = false;
+
+                for (const char* param_name : imu_params) {
+                    MV3D_RGBD_PARAM imuParam;
+                    imuParam.enParamType = ParamType_Bool;
+                    imuParam.ParamInfo.bBoolParam = true;
+                    nRet = MV3D_RGBD_SetParam(m_handle, param_name, &imuParam);
+                    if (MV3D_RGBD_OK == nRet) {
+                        std::cout << "IMU enabled using parameter: " << param_name << std::endl;
+                        imu_enabled = true;
+                        break;
+                    }
+                }
+
+                if (!imu_enabled) {
+                    std::cout << "Note: Could not enable IMU streaming (error 0x80060004)" << std::endl;
+                    std::cout << "      SLAM will work with visual-only tracking" << std::endl;
+                    std::cout << "      IMU may not be supported on this camera model" << std::endl;
+                }
             }
             else {
-                std::cerr << "Failed to register IMU callback: " << nRet << std::endl;
+                std::cout << "Warning: Failed to register IMU callback: 0x" << std::hex << nRet << std::endl;
             }
         }
         else {
-            std::cerr << "Failed to set EventNotification: " << nRet << std::endl;
+            std::cout << "Warning: Failed to set EventNotification: 0x" << std::hex << nRet << std::endl;
         }
-
-        std::cout << "Device opened successfully." << std::endl;
-
-        // Initialize camera intrinsics
-        InitializeCameraIntrinsics();
 
         return MV3D_RGBD_OK;
     }
 
-    void InitializeCameraIntrinsics() {
-        // Default intrinsics (replace with actual camera calibration)
-        float fx = 525.0f, fy = 525.0f, cx = 320.0f, cy = 240.0f;
-        int width = 640, height = 480;
-
-        // Use the selected resolution
-        if (m_selectedResolution < static_cast<int>(m_resolutions.size()) - 1) {
-            width = m_resolutions[m_selectedResolution].width;
-            height = m_resolutions[m_selectedResolution].height;
-            
-            // Scale intrinsics proportionally
-            cx = width / 2.0f;
-            cy = height / 2.0f;
-            fx = width * 525.0f / 640.0f;
-            fy = height * 525.0f / 480.0f;
-        }
-
-        m_intrinsics.SetIntrinsics(width, height, fx, fy, cx, cy);
-        m_intrinsicsInitialized = true;
-
-        std::cout << "Camera intrinsics initialized: " << width << "x" << height 
-                  << " fx=" << fx << " fy=" << fy << " cx=" << cx << " cy=" << cy << std::endl;
-    }
-
     int StartGrabbing() {
         if (!m_bDeviceOpen) {
-            std::cerr << "Device not opened!" << std::endl;
+            std::cerr << "Device is not open!" << std::endl;
             return MV3D_RGBD_E_HANDLE;
         }
 
         int nRet = MV3D_RGBD_Start(m_handle);
         if (MV3D_RGBD_OK != nRet) {
-            std::cerr << "Failed to start grabbing: " << nRet << std::endl;
+            std::cerr << "MV3D_RGBD_Start failed! Error: 0x" << std::hex << nRet << std::endl;
             return nRet;
         }
 
         m_bGrabbing = true;
         std::cout << "Started grabbing successfully." << std::endl;
-
-        // Initialize visualizers
-        if (m_showLivePointCloud) {
-            InitializeLiveVisualizer();
-        }
-        
-        if (m_showAccumulatedMap) {
-            InitializeMapVisualizer();
-        }
-
         return MV3D_RGBD_OK;
-    }
-
-    void InitializeLiveVisualizer() {
-        try {
-            m_liveVisualizer = std::make_shared<open3d::visualization::Visualizer>();
-            m_liveVisualizer->CreateVisualizerWindow("Live Point Cloud", 800, 600);
-            
-            auto& view_control = m_liveVisualizer->GetViewControl();
-            view_control.SetFront(Eigen::Vector3d(0, 0, 1));
-            view_control.SetUp(Eigen::Vector3d(0, -1, 0));
-            view_control.SetLookat(Eigen::Vector3d(0, 0, 2));
-            
-            std::cout << "Live point cloud visualizer initialized." << std::endl;
-        }
-        catch (const std::exception& e) {
-            std::cerr << "Failed to initialize live visualizer: " << e.what() << std::endl;
-            m_showLivePointCloud = false;
-        }
-    }
-
-    void InitializeMapVisualizer() {
-        try {
-            m_mapVisualizer = std::make_shared<open3d::visualization::Visualizer>();
-            m_mapVisualizer->CreateVisualizerWindow("SLAM Accumulated Map", 1000, 800);
-            
-            auto& view_control = m_mapVisualizer->GetViewControl();
-            view_control.SetFront(Eigen::Vector3d(0, 0, 1));
-            view_control.SetUp(Eigen::Vector3d(0, -1, 0));
-            view_control.SetLookat(Eigen::Vector3d(0, 0, 0));
-            
-            // Add coordinate frame
-            auto coordinate_frame = open3d::geometry::TriangleMesh::CreateCoordinateFrame(0.3);
-            m_mapVisualizer->AddGeometry(coordinate_frame);
-            
-            std::cout << "SLAM map visualizer initialized." << std::endl;
-        }
-        catch (const std::exception& e) {
-            std::cerr << "Failed to initialize map visualizer: " << e.what() << std::endl;
-            m_showAccumulatedMap = false;
-        }
     }
 
     int StopGrabbing() {
@@ -478,7 +889,7 @@ public:
 
         int nRet = MV3D_RGBD_Stop(m_handle);
         if (MV3D_RGBD_OK != nRet) {
-            std::cerr << "Failed to stop grabbing: " << nRet << std::endl;
+            std::cerr << "MV3D_RGBD_Stop failed! Error: 0x" << std::hex << nRet << std::endl;
             return nRet;
         }
 
@@ -488,350 +899,52 @@ public:
     }
 
     int CloseDevice() {
-        if (m_handle) {
-            int nRet = MV3D_RGBD_CloseDevice(&m_handle);
-            if (MV3D_RGBD_OK != nRet) {
-                std::cerr << "Failed to close device: " << nRet << std::endl;
-                return nRet;
-            }
-            m_handle = nullptr;
-            m_bDeviceOpen = false;
-            std::cout << "Device closed successfully." << std::endl;
+        if (!m_bDeviceOpen) {
+            return MV3D_RGBD_OK;
         }
+
+        int nRet = MV3D_RGBD_CloseDevice(&m_handle);
+        if (MV3D_RGBD_OK != nRet) {
+            std::cerr << "MV3D_RGBD_CloseDevice failed! Error: 0x" << std::hex << nRet << std::endl;
+            return nRet;
+        }
+
+        m_bDeviceOpen = false;
+        m_handle = nullptr;
+        std::cout << "Device closed successfully." << std::endl;
         return MV3D_RGBD_OK;
     }
 
-    std::shared_ptr<open3d::geometry::PointCloud> GeneratePointCloud(const cv::Mat& rgbFrame, const cv::Mat& depthFrame) {
-        if (!m_intrinsicsInitialized || rgbFrame.empty() || depthFrame.empty()) {
-            return nullptr;
-        }
-
-        try {
-            // Convert to Open3D images
-            open3d::geometry::Image colorImage, depthImage;
-
-            // Convert BGR to RGB
-            cv::Mat rgbConverted;
-            cv::cvtColor(rgbFrame, rgbConverted, cv::COLOR_BGR2RGB);
-
-            // Prepare color image
-            colorImage.Prepare(rgbFrame.cols, rgbFrame.rows, 3, sizeof(uint8_t));
-            std::memcpy(colorImage.data_.data(), rgbConverted.data, 
-                       rgbConverted.total() * rgbConverted.elemSize());
-
-            // Convert depth to float
-            cv::Mat depthFloat;
-            depthFrame.convertTo(depthFloat, CV_32F, 1.0 / m_depthScale);
-
-            depthImage.Prepare(depthFrame.cols, depthFrame.rows, 1, sizeof(float));
-            std::memcpy(depthImage.data_.data(), depthFloat.data, 
-                       depthFloat.total() * depthFloat.elemSize());
-
-            // Create RGBD image
-            auto rgbd = open3d::geometry::RGBDImage::CreateFromColorAndDepth(
-                colorImage, depthImage, 1.0, m_maxDepth, false);
-
-            // Generate point cloud
-            auto pointCloud = open3d::geometry::PointCloud::CreateFromRGBDImage(*rgbd, m_intrinsics);
-
-            // Apply coordinate system correction
-            Eigen::Matrix4d correction = Eigen::Matrix4d::Identity();
-            correction(1, 1) = -1; // Flip Y
-            correction(2, 2) = -1; // Flip Z
-            pointCloud->Transform(correction);
-
-            // Remove outliers and downsample
-            if (pointCloud->points_.size() > 100) {
-                // Statistical outlier removal
-                auto filtered_result = pointCloud->RemoveStatisticalOutliers(20, 2.0);
-                pointCloud = std::get<0>(filtered_result);  // Get the filtered cloud
-                
-                // Voxel downsampling
-                if (pointCloud->points_.size() > 1000) {
-                    pointCloud = pointCloud->VoxelDownSample(m_voxelSize);
-                }
-            }
-
-            return pointCloud;
-        }
-        catch (const std::exception& e) {
-            std::cerr << "Point cloud generation error: " << e.what() << std::endl;
-            return nullptr;
-        }
-    }
-
-    // Visual Odometry using ORB features
-    bool EstimateMotion(const cv::Mat& prevFrame, const cv::Mat& currentFrame, SLAMPose& relativePose) {
-        if (prevFrame.empty() || currentFrame.empty()) {
-            return false;
-        }
-
-        // Detect ORB features
-        std::vector<cv::KeyPoint> kp1, kp2;
-        cv::Mat desc1, desc2;
-        
-        m_orb_detector->detectAndCompute(prevFrame, cv::noArray(), kp1, desc1);
-        m_orb_detector->detectAndCompute(currentFrame, cv::noArray(), kp2, desc2);
-
-        if (kp1.size() < 50 || kp2.size() < 50) {
-            return false;
-        }
-
-        // Match features
-        std::vector<cv::DMatch> matches;
-        m_matcher->match(desc1, desc2, matches);
-
-        // Filter matches
-        if (matches.size() < m_minFeatureMatches) {
-            return false;
-        }
-
-        // Sort matches by distance
-        std::sort(matches.begin(), matches.end(), 
-                  [](const cv::DMatch& a, const cv::DMatch& b) { return a.distance < b.distance; });
-
-        // Keep only good matches (top 70%)
-        matches.resize(static_cast<size_t>(matches.size() * 0.7));
-
-        // Extract matched points
-        std::vector<cv::Point2f> pts1, pts2;
-        for (const auto& match : matches) {
-            pts1.push_back(kp1[match.queryIdx].pt);
-            pts2.push_back(kp2[match.trainIdx].pt);
-        }
-
-        // Estimate essential matrix
-        cv::Mat E, mask;
-        cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) << 
-            m_intrinsics.GetFocalLength().first, 0, m_intrinsics.GetPrincipalPoint().first,
-            0, m_intrinsics.GetFocalLength().second, m_intrinsics.GetPrincipalPoint().second,
-            0, 0, 1);
-
-        E = cv::findEssentialMat(pts1, pts2, cameraMatrix, cv::RANSAC, 0.999, 1.0, mask);
-
-        // Recover pose
-        cv::Mat R, t;
-        int inliers = cv::recoverPose(E, pts1, pts2, cameraMatrix, R, t, mask);
-
-        if (inliers < m_minFeatureMatches / 2) {
-            return false;
-        }
-
-        // Convert to Eigen
-        Eigen::Matrix3d rotation;
-        Eigen::Vector3d translation;
-
-        for (int i = 0; i < 3; i++) {
-            for (int j = 0; j < 3; j++) {
-                rotation(i, j) = R.at<double>(i, j);
-            }
-            translation(i) = t.at<double>(i, 0);
-        }
-
-        relativePose.rotation = Eigen::Quaterniond(rotation);
-        relativePose.translation = translation;
-        relativePose.confidence = static_cast<double>(inliers) / matches.size();
-        relativePose.timestamp = std::chrono::high_resolution_clock::now();
-
-        return true;
-    }
-
-    // IMU integration for motion prediction (simplified)
-    SLAMPose PredictMotionWithIMU(const SLAMPose& lastPose) {
-        if (!m_useIMUPrediction) {
-            return lastPose;
-        }
-
-        float xa, ya, za, xg, yg, zg;
-        bool hasNewData;
-        g_imuData.getData(xa, ya, za, xg, yg, zg, hasNewData);
-
-        if (!hasNewData) {
-            return lastPose;
-        }
-
-        // Simple IMU integration (in real SLAM, this would be much more sophisticated)
-        auto currentTime = std::chrono::high_resolution_clock::now();
-        auto dt = std::chrono::duration<double>(currentTime - m_lastImuTime).count();
-        m_lastImuTime = currentTime;
-
-        if (dt > 0.1 || dt <= 0) {  // Ignore large gaps or invalid time
-            return lastPose;
-        }
-
-        SLAMPose predictedPose = lastPose;
-
-        // Simple integration (this is a very basic approach)
-        // In real VIO, you'd use proper IMU preintegration
-        Eigen::Vector3d imuAccel(xa, ya, za);
-        Eigen::Vector3d imuGyro(xg, yg, zg);
-
-        // Rotate acceleration to world frame
-        Eigen::Vector3d worldAccel = lastPose.rotation * imuAccel;
-        
-        // Simple motion model (constant acceleration)
-        predictedPose.translation += worldAccel * dt * dt * 0.5;
-
-        // Integrate angular velocity
-        Eigen::Vector3d deltaAngle = imuGyro * dt;
-        if (deltaAngle.norm() > 0) {
-            Eigen::Quaterniond deltaRotation(Eigen::AngleAxisd(deltaAngle.norm(), deltaAngle.normalized()));
-            predictedPose.rotation = lastPose.rotation * deltaRotation;
-            predictedPose.rotation.normalize();
-        }
-
-        return predictedPose;
-    }
-
-    bool ShouldCreateKeyframe(const SLAMPose& currentPose) {
-        if (m_keyframes.empty()) {
-            return true;  // First keyframe
-        }
-
-        if (m_keyframes.size() >= m_maxKeyframes) {
-            // Remove oldest keyframe to maintain memory
-            m_keyframes.pop_front();
-        }
-
-        const SLAMPose& lastKeyframePose = m_keyframes.back().pose;
-
-        // Check distance threshold
-        double distance = (currentPose.translation - lastKeyframePose.translation).norm();
-        if (distance > m_keyframeDistanceThreshold) {
-            return true;
-        }
-
-        // Check rotation threshold
-        double angle = lastKeyframePose.rotation.angularDistance(currentPose.rotation);
-        if (angle > m_keyframeAngleThreshold) {
-            return true;
-        }
-
-        return false;
-    }
-
-    void CreateKeyframe(const cv::Mat& rgbFrame, const cv::Mat& depthFrame, 
-                       std::shared_ptr<open3d::geometry::PointCloud> pointCloud, 
-                       const SLAMPose& pose) {
-        SLAMKeyframe keyframe;
-        keyframe.id = static_cast<int>(m_keyframes.size());
-        keyframe.rgb_image = rgbFrame.clone();
-        keyframe.depth_image = depthFrame.clone();
-        keyframe.point_cloud = pointCloud;
-        keyframe.pose = pose;
-        keyframe.timestamp = std::chrono::high_resolution_clock::now();
-
-        // Extract ORB features for this keyframe
-        m_orb_detector->detectAndCompute(rgbFrame, cv::noArray(), keyframe.keypoints, keyframe.descriptors);
-
-        m_keyframes.push_back(keyframe);
-
-        // Transform point cloud to world coordinates and add to global map
-        if (pointCloud && !pointCloud->points_.empty()) {
-            auto transformedCloud = std::make_shared<open3d::geometry::PointCloud>(*pointCloud);
-            transformedCloud->Transform(pose.toMatrix());
-
-            std::lock_guard<std::mutex> lock(m_mapMutex);
-            *m_globalMap += *transformedCloud;
-            
-            // Downsample global map to keep it manageable
-            if (m_globalMap->points_.size() > 100000) {
-                m_globalMap = m_globalMap->VoxelDownSample(m_voxelSize * 2);
-            }
-        }
-
-        std::cout << "Created keyframe " << keyframe.id << " at pose: (" 
-                  << pose.translation.x() << ", " << pose.translation.y() << ", " << pose.translation.z() 
-                  << ") with " << (pointCloud ? pointCloud->points_.size() : 0) << " points" << std::endl;
-    }
-
-    void UpdateMapVisualization() {
-        if (!m_showAccumulatedMap || !m_mapVisualizer) {
-            return;
-        }
-
-        std::lock_guard<std::mutex> lock(m_mapMutex);
-        
-        try {
-            m_mapVisualizer->ClearGeometries();
-            
-            // Add coordinate frame
-            auto coordinate_frame = open3d::geometry::TriangleMesh::CreateCoordinateFrame(0.3);
-            m_mapVisualizer->AddGeometry(coordinate_frame);
-            
-            // Add global map
-            if (m_globalMap && !m_globalMap->points_.empty()) {
-                m_mapVisualizer->AddGeometry(m_globalMap);
-            }
-            
-            // Add camera trajectory
-            if (m_keyframes.size() > 1) {
-                auto trajectory = std::make_shared<open3d::geometry::LineSet>();
-                std::vector<Eigen::Vector3d> points;
-                std::vector<Eigen::Vector2i> lines;
-                
-                for (size_t i = 0; i < m_keyframes.size(); i++) {
-                    points.push_back(m_keyframes[i].pose.translation);
-                    if (i > 0) {
-                        lines.push_back(Eigen::Vector2i(i-1, i));
-                    }
-                }
-                
-                trajectory->points_ = points;
-                trajectory->lines_ = lines;
-                
-                // Set trajectory color to red
-                std::vector<Eigen::Vector3d> colors(lines.size(), Eigen::Vector3d(1.0, 0.0, 0.0));
-                trajectory->colors_ = colors;
-                
-                m_mapVisualizer->AddGeometry(trajectory);
-            }
-            
-            m_mapVisualizer->UpdateGeometry();
-            m_mapVisualizer->PollEvents();
-            m_mapVisualizer->UpdateRender();
-        }
-        catch (const std::exception& e) {
-            std::cerr << "Map visualization error: " << e.what() << std::endl;
-        }
-    }
-
-    void UpdateLiveVisualization(std::shared_ptr<open3d::geometry::PointCloud> pointCloud) {
-        if (!m_showLivePointCloud || !m_liveVisualizer || !pointCloud) {
-            return;
-        }
-
-        try {
-            m_liveVisualizer->ClearGeometries();
-            m_liveVisualizer->AddGeometry(pointCloud);
-            m_liveVisualizer->UpdateGeometry(pointCloud);
-            m_liveVisualizer->PollEvents();
-            m_liveVisualizer->UpdateRender();
-        }
-        catch (const std::exception& e) {
-            std::cerr << "Live visualization error: " << e.what() << std::endl;
-        }
-    }
-
     cv::Mat ConvertDepthToDisplay(const MV3D_RGBD_IMAGE_DATA& imageData) {
-        cv::Mat depthMat(imageData.nHeight, imageData.nWidth, CV_16UC1, imageData.pData);
+        if (imageData.pData == nullptr || imageData.nDataLen == 0) {
+            return cv::Mat();
+        }
+
+        // Create depth image from raw data
+        cv::Mat depthRaw(imageData.nHeight, imageData.nWidth, CV_16UC1, imageData.pData);
         cv::Mat depthDisplay;
 
+        // Convert to 8-bit for display (scale depth values)
         double minVal, maxVal;
-        cv::minMaxLoc(depthMat, &minVal, &maxVal);
-
+        cv::minMaxLoc(depthRaw, &minVal, &maxVal);
         if (maxVal > minVal) {
-            depthMat.convertTo(depthDisplay, CV_8UC1, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
-        } else {
+            depthRaw.convertTo(depthDisplay, CV_8UC1, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
+        }
+        else {
             depthDisplay = cv::Mat::zeros(imageData.nHeight, imageData.nWidth, CV_8UC1);
         }
 
+        // Apply colormap for better visualization
         cv::Mat coloredDepth;
         cv::applyColorMap(depthDisplay, coloredDepth, cv::COLORMAP_JET);
         return coloredDepth;
     }
 
     cv::Mat ConvertColorToDisplay(const MV3D_RGBD_IMAGE_DATA& imageData) {
+        if (imageData.pData == nullptr || imageData.nDataLen == 0) {
+            return cv::Mat();
+        }
+
         if (ImageType_RGB8_Planar == imageData.enImageType) {
             cv::Mat rgbDisplay(imageData.nHeight, imageData.nWidth, CV_8UC3);
             unsigned char* srcData = (unsigned char*)imageData.pData;
@@ -839,9 +952,9 @@ public:
 
             int pixelCount = imageData.nWidth * imageData.nHeight;
             for (int i = 0; i < pixelCount; i++) {
-                dstData[i * 3 + 2] = srcData[i];
-                dstData[i * 3 + 1] = srcData[i + pixelCount];
-                dstData[i * 3 + 0] = srcData[i + 2 * pixelCount];
+                dstData[i * 3 + 2] = srcData[i];                    // R
+                dstData[i * 3 + 1] = srcData[i + pixelCount];       // G
+                dstData[i * 3 + 0] = srcData[i + 2 * pixelCount];   // B
             }
             return rgbDisplay;
         }
@@ -851,319 +964,404 @@ public:
             cv::cvtColor(yuvMat, rgbMat, cv::COLOR_YUV2BGR_YUYV);
             return rgbMat;
         }
-        
+
         return cv::Mat();
     }
 
-    void DrawSLAMInfo(cv::Mat& image) {
-        // Get IMU data
+    void ResizeForDisplay(const cv::Mat& src, cv::Mat& dst) {
+        if (src.empty()) {
+            dst = cv::Mat();
+            return;
+        }
+
+        const DisplayResolution& res = m_resolutions[m_selectedResolution];
+
+        // Calculate scaling to fit within target resolution while maintaining aspect ratio
+        double scaleX = static_cast<double>(res.width) / src.cols;
+        double scaleY = static_cast<double>(res.height) / src.rows;
+        double scale = std::min(scaleX, scaleY);
+
+        int newWidth = static_cast<int>(src.cols * scale);
+        int newHeight = static_cast<int>(src.rows * scale);
+
+        cv::resize(src, dst, cv::Size(newWidth, newHeight));
+    }
+
+    void AddIMUOverlay(cv::Mat& image) {
+        if (image.empty()) return;
+
         float xa, ya, za, xg, yg, zg;
         bool newData;
         g_imuData.getData(xa, ya, za, xg, yg, zg, newData);
 
-        // Create SLAM status overlay (simplified for performance)
-        std::vector<std::string> slamText;
+        std::vector<std::string> imuText;
         std::stringstream ss;
 
-        slamText.push_back("=== SLAM Status ===");
-        
-        // IMU data (only if new data available)
+        imuText.push_back("=== IMU Data ===");
+
         if (newData) {
-            ss.str(""); ss << "IMU Acc: (" << std::fixed << std::setprecision(1) << xa << ", " << ya << ", " << za << ")";
-            slamText.push_back(ss.str());
-            
-            ss.str(""); ss << "IMU Gyro: (" << std::fixed << std::setprecision(1) << xg << ", " << yg << ", " << zg << ")";
-            slamText.push_back(ss.str());
+            ss.str(""); ss << std::fixed << std::setprecision(2);
+            ss << "Acc: (" << xa << ", " << ya << ", " << za << ") m/s²";
+            imuText.push_back(ss.str());
+
+            ss.str(""); ss << std::fixed << std::setprecision(2);
+            ss << "Gyro: (" << xg << ", " << yg << ", " << zg << ") rad/s";
+            imuText.push_back(ss.str());
+
+            imuText.push_back("IMU Status: ACTIVE");
+        }
+        else {
+            imuText.push_back("IMU Status: NO DATA");
+            imuText.push_back("Check IMU connection");
         }
 
-        // SLAM state (update less frequently)
-        if (m_frameCount % 10 == 0) {
-            ss.str(""); ss << "Keyframes: " << m_keyframes.size() << "/" << m_maxKeyframes;
-            slamText.push_back(ss.str());
-            
-            ss.str(""); ss << "Map Points: " << m_globalMap->points_.size();
-            slamText.push_back(ss.str());
-            
-            // Current pose
-            ss.str(""); ss << "Pose: (" << std::fixed << std::setprecision(1) 
-                          << m_currentPose.translation.x() << ", " 
-                          << m_currentPose.translation.y() << ", " 
-                          << m_currentPose.translation.z() << ")";
-            slamText.push_back(ss.str());
+        // Draw IMU overlay
+        int y_offset = image.rows - 100;
+        for (size_t i = 0; i < imuText.size(); i++) {
+            cv::Scalar color = (i == 0) ? cv::Scalar(0, 255, 255) :
+                (newData ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255));
+            cv::putText(image, imuText[i], cv::Point(10, y_offset + i * 20),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1);
+        }
+    }
+
+    // SLAM processing function with IMU integration
+    void ProcessSLAMFrame(const cv::Mat& rgbFrame, const cv::Mat& depthFrame) {
+        auto current_time = std::chrono::high_resolution_clock::now();
+        double elapsed = std::chrono::duration<double>(current_time - last_slam_time_).count();
+
+        // Process SLAM every 100ms for performance
+        if (elapsed < 0.1) {
+            return;
+        }
+        last_slam_time_ = current_time;
+
+        if (rgbFrame.empty() || depthFrame.empty()) {
+            return;
         }
 
-        // Draw overlay with optimized rendering
-        int fontFace = cv::FONT_HERSHEY_SIMPLEX;
-        double fontScale = 0.35;  // Slightly smaller for better performance
-        int thickness = 1;
-        cv::Scalar textColor(0, 255, 0);
-        cv::Scalar bgColor(0, 0, 0);
+        // Get IMU data and integrate it
+        float xa, ya, za, xg, yg, zg;
+        bool newIMUData;
+        g_imuData.getData(xa, ya, za, xg, yg, zg, newIMUData);
 
-        for (int i = 0; i < static_cast<int>(slamText.size()); i++) {
-            cv::Point textPos(10, 12 + i * 12);  // Tighter spacing
-            
-            // Simplified background (just text, no rectangles for performance)
-            cv::Scalar color = (i == 0) ? cv::Scalar(255, 255, 0) : textColor;
-            cv::putText(image, slamText[i], textPos, fontFace, fontScale, color, thickness);
+        if (newIMUData) {
+            cv::Vec3f gyro(xg, yg, zg);
+            cv::Vec3f accel(xa, ya, za);
+            double timestamp = std::chrono::duration<double>(current_time.time_since_epoch()).count();
+            slam_system_.UpdateIMUData(gyro, accel, timestamp);
         }
 
-        // Add frame counter
-        ss.str(""); ss << "F:" << m_frameCount;
-        cv::putText(image, ss.str(), cv::Point(10, 15 + static_cast<int>(slamText.size()) * 12), fontFace, fontScale, cv::Scalar(255, 255, 255), thickness);
+        // Ensure depth is 16-bit for SLAM processing
+        cv::Mat depth16;
+        if (depthFrame.type() == CV_16UC1) {
+            depth16 = depthFrame;
+        }
+        else {
+            depthFrame.convertTo(depth16, CV_16UC1);
+        }
+
+        double timestamp = std::chrono::duration<double>(current_time.time_since_epoch()).count();
+
+        bool success = slam_system_.ProcessFrame(rgbFrame, depth16, timestamp);
+
+        if (success) {
+            slam_initialized_ = true;
+
+            // Update visualization data
+            auto trajectory = slam_system_.GetTrajectory();
+            trajectory_points_.clear();
+            for (const auto& pose : trajectory) {
+                cv::Mat position = pose(cv::Rect(3, 0, 1, 3));
+                trajectory_points_.push_back(cv::Point3f(
+                    position.at<double>(0), position.at<double>(1), position.at<double>(2)
+                ));
+            }
+            map_points_ = slam_system_.GetMapPoints();
+
+            // Print position occasionally
+            static int counter = 0;
+            if (++counter % 30 == 0) {
+                cv::Vec3d translation, rotation;
+                slam_system_.GetPoseComponents(translation, rotation);
+                std::string imu_status = newIMUData ? "IMU: ON" : "IMU: OFF";
+                std::cout << "SLAM - Position: (" << std::fixed << std::setprecision(2)
+                    << translation[0] << ", " << translation[1] << ", "
+                    << translation[2] << ") m | KF: " << slam_system_.GetNumKeyframes()
+                    << " | MP: " << std::dec << slam_system_.GetNumMapPoints()
+                    << " | " << imu_status << std::endl;
+            }
+        }
+        else {
+            // Only print SLAM failures occasionally to avoid spam
+            static int fail_counter = 0;
+            if (++fail_counter % 60 == 0) { // Less frequent failure reporting
+                std::cout << "SLAM tracking lost - trying to recover..." << std::endl;
+            }
+        }
+    }
+
+    void DrawSLAMInfo(cv::Mat& image) {
+        if (image.empty()) return;
+
+        // SLAM status
+        if (!slam_initialized_) {
+            cv::putText(image, "SLAM: Initializing...", cv::Point(10, 30),
+                cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
+        }
+        else {
+            cv::putText(image, "SLAM: Active", cv::Point(10, 30),
+                cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
+
+            // Show statistics
+            std::string stats = "KF: " + std::to_string(slam_system_.GetNumKeyframes()) +
+                " | MP: " + std::to_string(slam_system_.GetNumMapPoints());
+            cv::putText(image, stats, cv::Point(10, 60),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+
+            // Show position
+            cv::Vec3d translation, rotation;
+            slam_system_.GetPoseComponents(translation, rotation);
+            std::stringstream pos_stream;
+            pos_stream << std::fixed << std::setprecision(2);
+            pos_stream << "Pos: (" << translation[0] << ", " << translation[1] << ", " << translation[2] << ")";
+            cv::putText(image, pos_stream.str(), cv::Point(10, 90),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+        }
+    }
+
+    cv::Mat CreateRoomMap(int size = 300) {
+        cv::Mat map = cv::Mat::zeros(size, size, CV_8UC3);
+
+        if (!slam_initialized_ || map_points_.empty()) {
+            cv::putText(map, "No SLAM data", cv::Point(size / 2 - 60, size / 2),
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 2);
+            return map;
+        }
+
+        // Find bounds
+        float min_x = map_points_[0].x, max_x = map_points_[0].x;
+        float min_z = map_points_[0].z, max_z = map_points_[0].z;
+
+        for (const auto& point : map_points_) {
+            min_x = std::min(min_x, point.x);
+            max_x = std::max(max_x, point.x);
+            min_z = std::min(min_z, point.z);
+            max_z = std::max(max_z, point.z);
+        }
+
+        float range = std::max(max_x - min_x, max_z - min_z);
+        if (range < 0.1f) return map;
+
+        float scale = (size - 40) / range;
+        cv::Point2f center(size / 2.0f, size / 2.0f);
+
+        // Draw map points
+        for (const auto& point : map_points_) {
+            int x = static_cast<int>(center.x + (point.x - (min_x + max_x) / 2.0f) * scale);
+            int y = static_cast<int>(center.y + (point.z - (min_z + max_z) / 2.0f) * scale);
+
+            if (x >= 0 && x < size && y >= 0 && y < size) {
+                cv::circle(map, cv::Point(x, y), 1, cv::Scalar(255, 255, 255), -1);
+            }
+        }
+
+        // Draw trajectory
+        for (size_t i = 1; i < trajectory_points_.size(); ++i) {
+            cv::Point3f p1 = trajectory_points_[i - 1];
+            cv::Point3f p2 = trajectory_points_[i];
+
+            int x1 = static_cast<int>(center.x + (p1.x - (min_x + max_x) / 2.0f) * scale);
+            int y1 = static_cast<int>(center.y + (p1.z - (min_z + max_z) / 2.0f) * scale);
+            int x2 = static_cast<int>(center.x + (p2.x - (min_x + max_x) / 2.0f) * scale);
+            int y2 = static_cast<int>(center.y + (p2.z - (min_z + max_z) / 2.0f) * scale);
+
+            cv::line(map, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(0, 255, 0), 2);
+        }
+
+        // Draw current position
+        if (!trajectory_points_.empty()) {
+            cv::Point3f current = trajectory_points_.back();
+            int x = static_cast<int>(center.x + (current.x - (min_x + max_x) / 2.0f) * scale);
+            int y = static_cast<int>(center.y + (current.z - (min_z + max_z) / 2.0f) * scale);
+            cv::circle(map, cv::Point(x, y), 4, cv::Scalar(0, 0, 255), -1);
+        }
+
+        // Add coordinate axes
+        cv::arrowedLine(map, cv::Point(20, size - 20), cv::Point(50, size - 20),
+            cv::Scalar(0, 0, 255), 2); // X axis - red
+        cv::arrowedLine(map, cv::Point(20, size - 20), cv::Point(20, size - 50),
+            cv::Scalar(0, 255, 0), 2); // Z axis - green
+        cv::putText(map, "X", cv::Point(55, size - 15), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255), 1);
+        cv::putText(map, "Z", cv::Point(25, size - 55), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
+
+        return map;
     }
 
     void ProcessFrameData(const MV3D_RGBD_FRAME_DATA& frameData) {
+        cv::Mat displayMat;
         cv::Mat rgbFrame, depthFrame;
-        static cv::Mat prevRgbFrame;
-        
-        for (unsigned int i = 0; i < frameData.nImageCount; i++) {
+        cv::Mat originalDepth; // Keep original depth for SLAM
+        bool hasRGB = false, hasDepth = false;
+
+        for (int i = 0; i < frameData.nImageCount; i++) {
             const MV3D_RGBD_IMAGE_DATA& imageData = frameData.stImageData[i];
 
-            std::string windowName;
-            cv::Mat displayMat;
+            if (ImageType_Depth == imageData.enImageType) {
+                // Store original depth for SLAM
+                originalDepth = cv::Mat(imageData.nHeight, imageData.nWidth, CV_16UC1, imageData.pData).clone();
 
-            switch (imageData.enImageType) {
-            case ImageType_Depth:
-                windowName = "Depth Stream with SLAM";
-                displayMat = ConvertDepthToDisplay(imageData);
-                depthFrame = cv::Mat(imageData.nHeight, imageData.nWidth, CV_16UC1, imageData.pData).clone();
-                break;
-
-            case ImageType_RGB8_Planar:
-            case ImageType_YUV422:
-            case ImageType_YUV420SP_NV12:
-            case ImageType_YUV420SP_NV21:
-                windowName = "Color Stream with SLAM";
-                displayMat = ConvertColorToDisplay(imageData);
-                if (!displayMat.empty()) {
-                    rgbFrame = displayMat.clone();
+                cv::Mat depthDisplay = ConvertDepthToDisplay(imageData);
+                if (!depthDisplay.empty()) {
+                    depthFrame = originalDepth; // Use original depth for SLAM
+                    hasDepth = true;
+                    ResizeForDisplay(depthDisplay, displayMat);
+                    cv::imshow("Depth", displayMat);
                 }
-                break;
-
-            default:
-                continue;
             }
+            else if (ImageType_RGB8_Planar == imageData.enImageType) {
+                cv::Mat colorDisplay = ConvertColorToDisplay(imageData);
+                if (!colorDisplay.empty()) {
+                    rgbFrame = colorDisplay.clone();
+                    hasRGB = true;
 
-            if (!displayMat.empty()) {
-                DrawSLAMInfo(displayMat);
-                cv::imshow(windowName, displayMat);
-                m_frameCount++;
-            }
-        }
+                    // Add SLAM info overlay
+                    DrawSLAMInfo(colorDisplay);
 
-        // Perform SLAM processing if both RGB and depth are available
-        if (!rgbFrame.empty() && !depthFrame.empty()) {
-            ProcessSLAMFrame(rgbFrame, depthFrame, prevRgbFrame);
-            prevRgbFrame = rgbFrame.clone();
-        }
-    }
+                    // Add IMU overlay
+                    AddIMUOverlay(colorDisplay);
 
-    void ProcessSLAMFrame(const cv::Mat& rgbFrame, const cv::Mat& depthFrame, const cv::Mat& prevRgbFrame) {
-        // Generate point cloud with lighter processing for performance
-        auto currentPointCloud = GeneratePointCloud(rgbFrame, depthFrame);
-        if (!currentPointCloud) {
-            return;
-        }
-
-        // Update live visualization only every 3rd frame for performance
-        if (m_frameCount % 3 == 0) {
-            UpdateLiveVisualization(currentPointCloud);
-        }
-
-        // Motion estimation
-        SLAMPose estimatedPose = m_currentPose;
-
-        if (!prevRgbFrame.empty() && m_frameCount > 1) {
-            // Try visual odometry (only every 2nd frame for performance)
-            if (m_frameCount % 2 == 0) {
-                SLAMPose relativePose;
-                if (EstimateMotion(prevRgbFrame, rgbFrame, relativePose)) {
-                    // Apply relative motion
-                    estimatedPose.translation = m_currentPose.translation + m_currentPose.rotation * relativePose.translation;
-                    estimatedPose.rotation = m_currentPose.rotation * relativePose.rotation;
-                    estimatedPose.rotation.normalize();
-                    estimatedPose.confidence = relativePose.confidence;
-                } else {
-                    // Fall back to IMU prediction
-                    estimatedPose = PredictMotionWithIMU(m_currentPose);
+                    ResizeForDisplay(colorDisplay, displayMat);
+                    cv::imshow("RGB", displayMat);
                 }
-            } else {
-                // Use IMU prediction for intermediate frames
-                estimatedPose = PredictMotionWithIMU(m_currentPose);
             }
-        }
+            else if (ImageType_YUV422 == imageData.enImageType) {
+                cv::Mat colorDisplay = ConvertColorToDisplay(imageData);
+                if (!colorDisplay.empty()) {
+                    rgbFrame = colorDisplay.clone();
+                    hasRGB = true;
 
-        // Update current pose
-        m_currentPose = estimatedPose;
+                    // Add SLAM info overlay
+                    DrawSLAMInfo(colorDisplay);
 
-        // Check if we should create a keyframe (less frequent for performance)
-        if (ShouldCreateKeyframe(m_currentPose)) {
-            CreateKeyframe(rgbFrame, depthFrame, currentPointCloud, m_currentPose);
-            
-            // Update map visualization only when keyframes are created
-            if (m_frameCount % 5 == 0) {  // Every 5th keyframe
-                UpdateMapVisualization();
+                    // Add IMU overlay
+                    AddIMUOverlay(colorDisplay);
+
+                    ResizeForDisplay(colorDisplay, displayMat);
+                    cv::imshow("Color", displayMat);
+                }
             }
-        }
-    }
-
-    void SaveMap(const std::string& filename) {
-        std::lock_guard<std::mutex> lock(m_mapMutex);
-        
-        if (m_globalMap && !m_globalMap->points_.empty()) {
-            bool success = open3d::io::WritePointCloud(filename, *m_globalMap);
-            if (success) {
-                std::cout << "Map saved to " << filename << " with " << m_globalMap->points_.size() << " points" << std::endl;
-            } else {
-                std::cerr << "Failed to save map to " << filename << std::endl;
-            }
-        } else {
-            std::cerr << "No map data to save!" << std::endl;
-        }
-    }
-
-    void SaveTrajectory(const std::string& filename) {
-        std::ofstream file(filename);
-        if (!file.is_open()) {
-            std::cerr << "Failed to open trajectory file: " << filename << std::endl;
-            return;
-        }
-
-        file << "# Timestamp tx ty tz qx qy qz qw" << std::endl;
-        for (const auto& keyframe : m_keyframes) {
-            auto timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                keyframe.timestamp.time_since_epoch()).count();
-            
-            const auto& t = keyframe.pose.translation;
-            const auto& q = keyframe.pose.rotation;
-            
-            file << timestamp << " " 
-                 << t.x() << " " << t.y() << " " << t.z() << " "
-                 << q.x() << " " << q.y() << " " << q.z() << " " << q.w() << std::endl;
-        }
-        
-        file.close();
-        std::cout << "Trajectory saved to " << filename << " with " << m_keyframes.size() << " poses" << std::endl;
-    }
-
-    int RunSLAM() {
-        if (!m_bGrabbing) {
-            std::cerr << "Grabbing not started!" << std::endl;
-            return MV3D_RGBD_E_HANDLE;
-        }
-
-        std::cout << "\n=== SLAM Point Cloud Accumulator Started ===" << std::endl;
-        std::cout << "Display Resolution: " << m_resolutions[m_selectedResolution].name << std::endl;
-        std::cout << "Live Point Cloud: " << (m_showLivePointCloud ? "Enabled" : "Disabled") << std::endl;
-        std::cout << "SLAM Map: " << (m_showAccumulatedMap ? "Enabled" : "Disabled") << std::endl;
-        std::cout << "IMU Integration: " << (m_useIMUPrediction ? "Enabled" : "Disabled") << std::endl;
-        std::cout << "\nControls:" << std::endl;
-        std::cout << "  - Press 'q' on any window to quit" << std::endl;
-        std::cout << "  - Press 'ESC' on any window to quit" << std::endl;
-        std::cout << "  - Press 's' to save map and trajectory" << std::endl;
-        std::cout << "  - Press 'r' to reset SLAM" << std::endl;
-        std::cout << "  - Press 'f' to toggle FPS display" << std::endl;
-        std::cout << "========================================================" << std::endl;
-
-        MV3D_RGBD_FRAME_DATA frameData = { 0 };
-        
-        // FPS monitoring
-        auto startTime = std::chrono::high_resolution_clock::now();
-        int fpsCounter = 0;
-        bool showFPS = true;
-
-        while (true) {
-            // Reduced timeout for better responsiveness - was 100ms, now 33ms (~30 FPS max)
-            int nRet = MV3D_RGBD_FetchFrame(m_handle, &frameData, 33);
-            if (MV3D_RGBD_OK == nRet) {
-                if (!frameData.nValidInfo) {
-                    ProcessFrameData(frameData);
-                    fpsCounter++;
-                    
-                    // Calculate and display FPS every second
-                    if (showFPS && fpsCounter % 30 == 0) {
-                        auto currentTime = std::chrono::high_resolution_clock::now();
-                        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime);
-                        if (duration.count() > 1000) {
-                            double fps = fpsCounter * 1000.0 / duration.count();
-                            std::cout << "Current FPS: " << std::fixed << std::setprecision(1) << fps << std::endl;
-                            startTime = currentTime;
-                            fpsCounter = 0;
-                        }
+            else if (ImageType_Mono8 == imageData.enImageType) {
+                cv::Mat irDisplay(imageData.nHeight, imageData.nWidth, CV_8UC1, imageData.pData);
+                if (!irDisplay.empty()) {
+                    ResizeForDisplay(irDisplay, displayMat);
+                    if (imageData.enStreamType == StreamType_Ir_Right) {
+                        cv::imshow("IR Right", displayMat);
+                    }
+                    else {
+                        cv::imshow("IR Left", displayMat);
                     }
                 }
             }
+        }
 
-            // Reduced waitKey timeout for better responsiveness - was 1ms, now immediate
+        // Process SLAM with RGB and depth frames
+        if (hasRGB && hasDepth) {
+            ProcessSLAMFrame(rgbFrame, depthFrame);
+        }
+
+        // Show room map if SLAM is running
+        if (slam_initialized_) {
+            cv::Mat roomMap = CreateRoomMap(400);
+            cv::imshow("Room Map", roomMap);
+        }
+
+        m_frameCount++;
+    }
+
+    int RunViewer() {
+        if (!m_bGrabbing) {
+            std::cerr << "Device is not grabbing!" << std::endl;
+            return MV3D_RGBD_E_HANDLE;
+        }
+
+        std::cout << "\n=== Real-Time Viewer with IMU and SLAM Started ===" << std::endl;
+        std::cout << "Display Resolution: " << m_resolutions[m_selectedResolution].name << std::endl;
+        std::cout << "\nControls:" << std::endl;
+        std::cout << "  - Press 'q' on any window to quit" << std::endl;
+        std::cout << "  - Press 'ESC' on any window to quit" << std::endl;
+        std::cout << "  - Press 'r' to change resolution" << std::endl;
+        std::cout << "  - Press 's' to reset SLAM" << std::endl;
+        std::cout << "  - Press 'c' to calibrate camera (info)" << std::endl;
+        std::cout << "=======================================" << std::endl;
+
+        MV3D_RGBD_FRAME_DATA frameData = { 0 };
+
+        while (true) {
+            int nRet = MV3D_RGBD_FetchFrame(m_handle, &frameData, 100);
+            if (MV3D_RGBD_OK == nRet) {
+                if (!frameData.nValidInfo) {
+                    ProcessFrameData(frameData);
+                }
+            }
+
+            // Check for key press
             int key = cv::waitKey(1) & 0xFF;
-            if (key == 'q' || key == 27) {
+            if (key == 'q' || key == 27) { // 'q' or ESC
                 break;
             }
-            else if (key == 's') {
-                // Save map and trajectory
-                SaveMap("slam_map.pcd");
-                SaveTrajectory("slam_trajectory.txt");
-                std::cout << "Map and trajectory saved!" << std::endl;
-            }
             else if (key == 'r') {
-                // Reset SLAM
-                m_keyframes.clear();
-                m_globalMap->Clear();
-                m_currentPose = SLAMPose();
-                std::cout << "SLAM reset!" << std::endl;
+                // Change resolution
+                cv::destroyAllWindows();
+                SelectDisplayResolution();
+                std::cout << "Resolution changed to: " << m_resolutions[m_selectedResolution].name << std::endl;
             }
-            else if (key == 'f') {
-                // Toggle FPS display
-                showFPS = !showFPS;
-                std::cout << "FPS display: " << (showFPS ? "ON" : "OFF") << std::endl;
+            else if (key == 's') {
+                // Reset SLAM
+                slam_system_.Reset();
+                slam_initialized_ = false;
+                trajectory_points_.clear();
+                map_points_.clear();
+                std::cout << "SLAM system reset!" << std::endl;
+            }
+            else if (key == 'c') {
+                // Camera calibration info
+                std::cout << "\n=== Camera Calibration Info ===" << std::endl;
+                std::cout << "Current calibration: fx=735.749, fy=731.258, cx=617.785, cy=358.336" << std::endl;
+                std::cout << "These are your ACTUAL calibrated values - SLAM should be accurate!" << std::endl;
+                std::cout << "\n=== IMU Troubleshooting ===" << std::endl;
+                std::cout << "If IMU shows 'OFF':" << std::endl;
+                std::cout << "1. Check if IMU is enabled in camera settings" << std::endl;
+                std::cout << "2. Verify IMU callback registration" << std::endl;
+                std::cout << "3. Move camera gently to generate IMU data" << std::endl;
+                std::cout << "===============================" << std::endl;
             }
 
-            // Also check console input
+            // Also check console input (for systems without window focus)
             if (KBHIT()) {
                 break;
             }
-
-            // Check if visualization windows were closed
-            if (m_showLivePointCloud && m_liveVisualizer) {
-                if (!m_liveVisualizer->PollEvents()) {
-                    m_showLivePointCloud = false;
-                    m_liveVisualizer.reset();
-                }
-            }
-            
-            if (m_showAccumulatedMap && m_mapVisualizer) {
-                if (!m_mapVisualizer->PollEvents()) {
-                    break;  // Exit if main map window is closed
-                }
-            }
         }
 
-        // Final save
-        SaveMap("final_slam_map.pcd");
-        SaveTrajectory("final_slam_trajectory.txt");
-
-        std::cout << "\nSLAM completed! Total frames: " << m_frameCount 
-                  << ", Keyframes: " << m_keyframes.size() 
-                  << ", Map points: " << m_globalMap->points_.size() << std::endl;
+        std::cout << "\nViewer stopped. Total frames displayed: " << m_frameCount << std::endl;
         return MV3D_RGBD_OK;
     }
 };
 
 int main(int argc, char* argv[]) {
-    std::cout << "=== SLAM Point Cloud Accumulator with IMU ===" << std::endl;
-    std::cout << "This program performs real-time SLAM using RGB-D camera and IMU data," << std::endl;
-    std::cout << "accumulating point clouds into a 3D map using visual-inertial odometry." << std::endl;
+    std::cout << "=== RGBD, IR Real-Time Viewer with IMU Data and SLAM ===" << std::endl;
+    std::cout << "This program displays RGBD and IR streams with IMU data overlay and SLAM." << std::endl;
 
-    SLAMPointCloudAccumulator slam;
+    RGBDIRViewer viewer;
 
-    // Configure SLAM parameters
-    int nRet = slam.SelectSLAMParameters();
+    // Select display resolution first
+    int nRet = viewer.SelectDisplayResolution();
     if (MV3D_RGBD_OK != nRet) {
         return -1;
     }
 
     // Initialize SDK
-    nRet = slam.Initialize();
+    nRet = viewer.Initialize();
     if (MV3D_RGBD_OK != nRet) {
         std::cerr << "Failed to initialize. Make sure the MV3D RGBD SDK is properly installed." << std::endl;
         return -1;
@@ -1171,13 +1369,13 @@ int main(int argc, char* argv[]) {
 
     // Enumerate devices
     std::vector<MV3D_RGBD_DEVICE_INFO> deviceList;
-    nRet = slam.EnumerateDevices(deviceList);
+    nRet = viewer.EnumerateDevices(deviceList);
     if (MV3D_RGBD_OK != nRet || deviceList.empty()) {
         std::cerr << "No devices found. Make sure the camera is connected." << std::endl;
         return -1;
     }
 
-    // Select device
+    // Select device (use first device by default)
     unsigned int deviceIndex = 0;
     if (deviceList.size() > 1) {
         std::cout << "Multiple devices found. Enter device index (0-" << (deviceList.size() - 1) << "): ";
@@ -1189,20 +1387,20 @@ int main(int argc, char* argv[]) {
     }
 
     // Open device
-    nRet = slam.OpenDevice(deviceList[deviceIndex]);
+    nRet = viewer.OpenDevice(deviceList[deviceIndex]);
     if (MV3D_RGBD_OK != nRet) {
         return -1;
     }
 
     // Start grabbing
-    nRet = slam.StartGrabbing();
+    nRet = viewer.StartGrabbing();
     if (MV3D_RGBD_OK != nRet) {
         return -1;
     }
 
-    // Run SLAM
-    nRet = slam.RunSLAM();
+    // Run real-time viewer with IMU overlay and SLAM
+    nRet = viewer.RunViewer();
 
-    std::cout << "SLAM Point Cloud Accumulation completed!" << std::endl;
+    std::cout << "Real-time viewing with IMU data and SLAM completed!" << std::endl;
     return 0;
 }
