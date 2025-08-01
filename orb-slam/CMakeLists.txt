@@ -388,3 +388,52 @@ if(realsense2_FOUND)
             Examples_old/Stereo-Inertial/stereo_inertial_realsense_D435i.cc)
     target_link_libraries(stereo_inertial_realsense_D435i_old ${PROJECT_NAME})
 endif()
+
+# Add this section to your ORB-SLAM3/CMakeLists.txt
+# Add it after the existing RGB-D examples section
+
+# Find OrbbecSDK
+find_path(OrbbecSDK_INCLUDE_DIR
+    NAMES libobsensor/ObSensor.hpp
+    PATHS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../O-depth-cam/OrbbecSDK_v2.4.8/include
+        /usr/local/include
+        /usr/include
+)
+
+find_library(OrbbecSDK_LIBRARY
+    NAMES OrbbecSDK
+    PATHS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../O-depth-cam/OrbbecSDK_v2.4.8/lib
+        /usr/local/lib
+        /usr/lib
+        /usr/lib/x86_64-linux-gnu
+)
+
+if(OrbbecSDK_INCLUDE_DIR AND OrbbecSDK_LIBRARY)
+    set(OrbbecSDK_FOUND TRUE)
+    message(STATUS "OrbbecSDK found: ${OrbbecSDK_LIBRARY}")
+else()
+    set(OrbbecSDK_FOUND FALSE)
+    message(WARNING "OrbbecSDK not found. Orbbec examples will not be built.")
+endif()
+
+# RGB-D Orbbec examples
+if(OrbbecSDK_FOUND)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/RGB-D)
+    
+    add_executable(rgbd_orbbec_gemini335
+            Examples/RGB-D/rgbd_orbbec_gemini335.cc)
+    
+    target_include_directories(rgbd_orbbec_gemini335 PRIVATE ${OrbbecSDK_INCLUDE_DIR})
+    target_link_libraries(rgbd_orbbec_gemini335 ${PROJECT_NAME} ${OrbbecSDK_LIBRARY})
+    
+    # RGB-D-Inertial Orbbec examples
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/RGB-D-Inertial)
+    
+    add_executable(rgbd_inertial_orbbec_gemini335
+            Examples/RGB-D-Inertial/rgbd_inertial_orbbec_gemini335.cc)
+    
+    target_include_directories(rgbd_inertial_orbbec_gemini335 PRIVATE ${OrbbecSDK_INCLUDE_DIR})
+    target_link_libraries(rgbd_inertial_orbbec_gemini335 ${PROJECT_NAME} ${OrbbecSDK_LIBRARY})
+endif()
