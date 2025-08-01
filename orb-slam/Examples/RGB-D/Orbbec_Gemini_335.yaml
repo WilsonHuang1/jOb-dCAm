@@ -9,11 +9,11 @@ File.version: "1.0"
 Camera.type: "PinHole"
 
 # Color Camera calibration and distortion parameters
-# Scaled from 1920x1080 to 640x480 (scale factor = 640/1920 = 1/3)
-Camera1.fx: 345.268
-Camera1.fy: 345.536
-Camera1.cx: 321.761
-Camera1.cy: 180.233
+# Using color camera as primary (Camera1) for better feature detection
+Camera1.fx: 1035.805420
+Camera1.fy: 1036.608398
+Camera1.cx: 965.283142
+Camera1.cy: 540.698120
 
 # Color camera distortion parameters (Brown-Conrady K6 model)
 Camera1.k1: 0.009173
@@ -21,9 +21,13 @@ Camera1.k2: -0.052995
 Camera1.p1: -0.000152
 Camera1.p2: -0.000378
 
-# Camera resolution (scaled down from 1920x1080 to 640x480)
-Camera.width: 640
-Camera.height: 480
+# Camera resolution (using color camera resolution)
+Camera.width: 1920
+Camera.height: 1080
+
+# Display resolution for ORB-SLAM3 viewer (scales down the display only)
+Camera.newWidth: 640
+Camera.newHeight: 320
 
 # Camera frames per second (adjust based on your setup)
 Camera.fps: 30
@@ -46,9 +50,9 @@ IMU.T_b_c1: !!opencv-matrix
    rows: 4
    cols: 4
    dt: f
-   data: [0.999998, 0.001045, -0.001768, -0.000246,
-         -0.001045, 0.999999, -0.000077, -0.000065,
-         0.001768, 0.000078, 0.999998, 0.016948,
+   data: [0.999998, 0.001045, -0.001768, -0.013575029503,
+         -0.001045, 0.999999, -0.000077, -0.000153629139,
+         0.001768, 0.000078, 0.999998, -0.019000161106,
          0.0, 0.0, 0.0, 1.0]
 
 # Do not insert KFs when recently lost
