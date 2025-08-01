@@ -1,0 +1,102 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# Camera Parameters for Orbbec Gemini 335 - RGB-D Primary with IMU Supplement
+# Based on your existing working configuration with reduced IMU influence
+#--------------------------------------------------------------------------------------------
+File.version: "1.0"
+
+Camera.type: "PinHole"
+
+# Color Camera calibration and distortion parameters
+# Using color camera as primary (Camera1) for better feature detection
+Camera1.fx: 1035.805420
+Camera1.fy: 1036.608398
+Camera1.cx: 965.283142
+Camera1.cy: 540.698120
+
+# Color camera distortion parameters (Brown-Conrady K6 model)
+Camera1.k1: 0.009173
+Camera1.k2: -0.052995
+Camera1.p1: -0.000152
+Camera1.p2: -0.000378
+
+# Camera resolution (using color camera resolution)
+Camera.width: 1920
+Camera.height: 1080
+
+# Display resolution for ORB-SLAM3 viewer (scales down the display only)
+Camera.newWidth: 640
+Camera.newHeight: 320
+
+# Camera frames per second (adjust based on your setup)
+Camera.fps: 30
+
+# Color order of the images (0: BGR, 1: RGB. Adjust based on your camera output)
+Camera.RGB: 1
+
+# Stereo/Depth parameters
+Stereo.ThDepth: 40.0
+# Baseline from extrinsics (translation x-component converted to meters)
+Stereo.b: 0.013851
+
+# Depth map values factor (typically 1000 for mm to m conversion)
+RGBD.DepthMapFactor: 1000.0
+
+#--------------------------------------------------------------------------------------------
+# IMU Parameters - CONFIGURED TO REDUCE DRIFT (RGB-D PRIMARY)
+#--------------------------------------------------------------------------------------------
+
+# Transformation from IMU body-frame to Camera1 (color camera)
+# Based on depth-to-accelerometer extrinsics (converted to meters)
+# Note: This assumes IMU is aligned with depth camera coordinate system
+IMU.T_b_c1: !!opencv-matrix
+   rows: 4
+   cols: 4
+   dt: f
+   data: [0.999998, 0.001045, -0.001768, -0.000246,
+         -0.001045, 0.999999, -0.000077, -0.000065,
+         0.001768, 0.000078, 0.999998, 0.016948,
+         0.0, 0.0, 0.0, 1.0]
+
+# Allow visual-only keyframes when IMU is unreliable (helps reduce drift)
+IMU.InsertKFsWhenLost: 1
+
+# IMU noise parameters - INCREASED to reduce IMU influence and prevent drift
+# Higher values = less trust in IMU, more reliance on RGB-D visual tracking
+IMU.NoiseGyro: 0.002000    # Increased from 0.000032 (62x higher - much less gyro influence)
+IMU.NoiseAcc: 0.008000     # Increased from 0.000400 (20x higher - much less accel influence)
+IMU.GyroWalk: 0.000200     # Increased from 0.000002 (100x higher - accounts for gyro drift)
+IMU.AccWalk: 0.001600      # Increased from 0.000080 (20x higher - accounts for accel drift)
+IMU.Frequency: 200.0       # IMU frequency (adjust based on your IMU output rate)
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters - ENHANCED FOR BETTER RGB-D TRACKING
+#--------------------------------------------------------------------------------------------
+# Increase features for more robust visual tracking (compensates for reduced IMU)
+ORBextractor.nFeatures: 2000   # Increased from 1250 for better visual tracking
+
+# ORB Extractor: Scale factor between levels in the scale pyramid 	
+ORBextractor.scaleFactor: 1.2
+
+# ORB Extractor: Number of levels in the scale pyramid	
+ORBextractor.nLevels: 8
+
+# ORB Extractor: Fast threshold - LOWERED for more features in low-texture areas
+# This helps when IMU influence is reduced
+ORBextractor.iniThFAST: 15     # Reduced from 20 for more features
+ORBextractor.minThFAST: 5      # Reduced from 7 for more features
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -3.5
+Viewer.ViewpointF: 500.0
