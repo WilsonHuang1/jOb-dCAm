@@ -1,8 +1,8 @@
 %YAML:1.0
 
 #--------------------------------------------------------------------------------------------
-# Camera Parameters for Orbbec Gemini 335 - RGB-D Primary with IMU Supplement
-# Based on your existing working configuration with reduced IMU influence
+# Camera Parameters for Orbbec Gemini 335
+# Based on extracted calibration parameters
 #--------------------------------------------------------------------------------------------
 File.version: "1.0"
 
@@ -43,10 +43,6 @@ Stereo.b: 0.013851
 # Depth map values factor (typically 1000 for mm to m conversion)
 RGBD.DepthMapFactor: 1000.0
 
-#--------------------------------------------------------------------------------------------
-# IMU Parameters - CONFIGURED TO REDUCE DRIFT (RGB-D PRIMARY)
-#--------------------------------------------------------------------------------------------
-
 # Transformation from IMU body-frame to Camera1 (color camera)
 # Based on depth-to-accelerometer extrinsics (converted to meters)
 # Note: This assumes IMU is aligned with depth camera coordinate system
@@ -54,27 +50,26 @@ IMU.T_b_c1: !!opencv-matrix
    rows: 4
    cols: 4
    dt: f
-   data: [0.999998, 0.001045, -0.001768, -0.000246,
-         -0.001045, 0.999999, -0.000077, -0.000065,
-         0.001768, 0.000078, 0.999998, 0.016948,
+   data: [0.999998, 0.001045, -0.001768, -0.013575029503,
+         -0.001045, 0.999999, -0.000077, -0.000153629139,
+         0.001768, 0.000078, 0.999998, -0.019000161106,
          0.0, 0.0, 0.0, 1.0]
 
-# Allow visual-only keyframes when IMU is unreliable (helps reduce drift)
-IMU.InsertKFsWhenLost: 1
+# Do not insert KFs when recently lost
+IMU.InsertKFsWhenLost: 0
 
-# IMU noise parameters - INCREASED to reduce IMU influence and prevent drift
-# Higher values = less trust in IMU, more reliance on RGB-D visual tracking
-IMU.NoiseGyro: 0.002000    # Increased from 0.000032 (62x higher - much less gyro influence)
-IMU.NoiseAcc: 0.008000     # Increased from 0.000400 (20x higher - much less accel influence)
-IMU.GyroWalk: 0.000200     # Increased from 0.000002 (100x higher - accounts for gyro drift)
-IMU.AccWalk: 0.001600      # Increased from 0.000080 (20x higher - accounts for accel drift)
+# IMU noise parameters (from extracted calibration)
+IMU.NoiseGyro: 0.000032    # Gyroscope noise density
+IMU.NoiseAcc: 0.000400     # Accelerometer noise density
+IMU.GyroWalk: 0.000002     # Gyroscope random walk
+IMU.AccWalk: 0.000080      # Accelerometer random walk
 IMU.Frequency: 200.0       # IMU frequency (adjust based on your IMU output rate)
 
 #--------------------------------------------------------------------------------------------
-# ORB Parameters - ENHANCED FOR BETTER RGB-D TRACKING
+# ORB Parameters
 #--------------------------------------------------------------------------------------------
-# Increase features for more robust visual tracking (compensates for reduced IMU)
-ORBextractor.nFeatures: 2000   # Increased from 1250 for better visual tracking
+# ORB Extractor: Number of features per image
+ORBextractor.nFeatures: 1250
 
 # ORB Extractor: Scale factor between levels in the scale pyramid 	
 ORBextractor.scaleFactor: 1.2
@@ -82,10 +77,12 @@ ORBextractor.scaleFactor: 1.2
 # ORB Extractor: Number of levels in the scale pyramid	
 ORBextractor.nLevels: 8
 
-# ORB Extractor: Fast threshold - LOWERED for more features in low-texture areas
-# This helps when IMU influence is reduced
-ORBextractor.iniThFAST: 15     # Reduced from 20 for more features
-ORBextractor.minThFAST: 5      # Reduced from 7 for more features
+# ORB Extractor: Fast threshold
+# Image is divided in a grid. At each cell FAST are extracted imposing a minimum response.
+# Firstly we impose iniThFAST. If no corners are detected we impose a lower value minThFAST
+# You can lower these values if your images have low contrast			
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
 
 #--------------------------------------------------------------------------------------------
 # Viewer Parameters

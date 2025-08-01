@@ -91,40 +91,52 @@ public:
                 return false;
             }
             
-            // Get color frame
-            auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
-            auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
-            
-            if (!colorFrame || !depthFrame) {
-                std::cout << "Missing color or depth frame, retrying..." << std::endl;
+            // Use Orbbec's hardware alignment (synchronous mode)
+            auto alignedFrame = align_filter_->process(frameSet);
+            if (!alignedFrame) {
+                std::cout << "Alignment failed, retrying..." << std::endl;
                 return false;
             }
             
-            // Process color frame
+            // Cast aligned frame back to FrameSet
+            auto alignedFrameSet = alignedFrame->as<ob::FrameSet>();
+            if (!alignedFrameSet) {
+                std::cout << "Failed to convert aligned frame to frameset, retrying..." << std::endl;
+                return false;
+            }
+            
+            // Get aligned frames (depth now aligned to color coordinate system)
+            auto colorFrame = alignedFrameSet->getFrame(OB_FRAME_COLOR);
+            auto alignedDepthFrame = alignedFrameSet->getFrame(OB_FRAME_DEPTH);
+            
+            if (!colorFrame || !alignedDepthFrame) {
+                std::cout << "Missing aligned color or depth frame, retrying..." << std::endl;
+                return false;
+            }
+            
+            // Process color frame (primary sensor)
             auto colorVideoFrame = colorFrame->as<ob::ColorFrame>();
             int color_width = colorVideoFrame->getWidth();
             int color_height = colorVideoFrame->getHeight();
             
-            // Convert to OpenCV Mat (RGB format)
             cv::Mat color_temp(color_height, color_width, CV_8UC3, (void*)colorVideoFrame->getData());
-            cv::cvtColor(color_temp, color, cv::COLOR_RGB2BGR); // Convert to BGR for OpenCV
+            cv::cvtColor(color_temp, color, cv::COLOR_RGB2BGR);
             
-            timestamp = colorVideoFrame->getTimeStampUs() / 1000000.0; // Convert to seconds
+            timestamp = colorVideoFrame->getTimeStampUs() / 1000000.0;
             
-            // Process depth frame
-            auto depthVideoFrame = depthFrame->as<ob::DepthFrame>();
-            int depth_width = depthVideoFrame->getWidth();
-            int depth_height = depthVideoFrame->getHeight();
+            // Process aligned depth frame (now in color coordinate system)
+            auto alignedDepthVideoFrame = alignedDepthFrame->as<ob::DepthFrame>();
+            depth = cv::Mat(alignedDepthVideoFrame->getHeight(), alignedDepthVideoFrame->getWidth(), 
+                           CV_16UC1, (void*)alignedDepthVideoFrame->getData()).clone();
             
-            // Convert to OpenCV Mat (16-bit depth)
-            depth = cv::Mat(depth_height, depth_width, CV_16UC1, (void*)depthVideoFrame->getData()).clone();
-            
-            // Resize depth to match color if needed
+            // Verify alignment worked correctly
             if (depth.size() != color.size()) {
-                cv::resize(depth, depth, color.size(), 0, 0, cv::INTER_NEAREST);
+                std::cerr << "ERROR: Hardware alignment failed!" << std::endl;
+                std::cerr << "Color: " << color.size() << ", Aligned Depth: " << depth.size() << std::endl;
+                return false;
             }
             
-            std::cout << "Got frames - Color: " << color.size() << ", Depth: " << depth.size() << std::endl;
+            std::cout << "Hardware-aligned frames - Color: " << color.size() << ", Depth: " << depth.size() << std::endl;
             
             return !color.empty() && !depth.empty();
             
@@ -174,6 +186,7 @@ int main(int argc, char **argv) {
     // Main loop
     cv::Mat color, depth;
     double timestamp = 0.0;
+    int frame_count = 0;
     
     while (true) {
         // Get frames from camera
@@ -183,6 +196,8 @@ int main(int argc, char **argv) {
             continue;
         }
 
+        frame_count++;
+        
         // Resize images if needed
         if (imageScale != 1.f) {
             int width = color.cols * imageScale;
@@ -193,13 +208,19 @@ int main(int argc, char **argv) {
 
         // Pass the images to the SLAM system (full resolution)
         auto start = std::chrono::steady_clock::now();
-        SLAM.TrackRGBD(color, depth, timestamp);
+        auto pose = SLAM.TrackRGBD(color, depth, timestamp);
         auto end = std::chrono::steady_clock::now();
         
         double ttrack = std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count();
 
-        // Display some info
-        cout << "Frame processed in " << ttrack << " seconds" << endl;
+        // Display tracking status (every 10 frames)
+        if (frame_count % 10 == 0) {
+            if (pose.matrix().isZero()) {
+                cout << "Frame " << frame_count << " - TRACKING LOST!" << endl;
+            } else {
+                cout << "Frame " << frame_count << " processed in " << ttrack << " seconds - TRACKING OK" << endl;
+            }
+        }
 
         // Check for quit key (simple check without creating windows)
         if (cv::waitKey(1) == 'q') {
