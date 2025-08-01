@@ -191,7 +191,7 @@ int main(int argc, char **argv) {
             cv::resize(depth, depth, cv::Size(width, height), 0, 0, cv::INTER_NEAREST);
         }
 
-        // Pass the images to the SLAM system
+        // Pass the images to the SLAM system (full resolution)
         auto start = std::chrono::steady_clock::now();
         SLAM.TrackRGBD(color, depth, timestamp);
         auto end = std::chrono::steady_clock::now();
@@ -201,9 +201,8 @@ int main(int argc, char **argv) {
         // Display some info
         cout << "Frame processed in " << ttrack << " seconds" << endl;
 
-        // Check for quit key
-        char key = cv::waitKey(1);
-        if (key == 'q' || key == 'Q') {
+        // Check for quit key (simple check without creating windows)
+        if (cv::waitKey(1) == 'q') {
             break;
         }
     }
