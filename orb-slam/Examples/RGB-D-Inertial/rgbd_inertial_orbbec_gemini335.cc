@@ -53,7 +53,7 @@ public:
             config_ = std::make_shared<ob::Config>();
             
             // Configure color and depth streams with specific resolutions
-            config_->enableVideoStream(OB_STREAM_COLOR, 1920, 1080, 30, OB_FORMAT_RGB);
+            config_->enableVideoStream(OB_STREAM_COLOR, 1280, 720, 30, OB_FORMAT_RGB);
             config_->enableVideoStream(OB_STREAM_DEPTH, 848, 480, 30, OB_FORMAT_Y16);
             
             // Configure IMU streams - ADD THIS FOR IMU SUPPORT
@@ -194,6 +194,7 @@ int main(int argc, char **argv) {
 
     // Create SLAM system - CHANGE TO IMU_RGBD MODE
     ORB_SLAM3::System SLAM(argv[1], argv[2], ORB_SLAM3::System::IMU_RGBD, true);
+    
     float imageScale = SLAM.GetImageScale();
 
     // Start camera
@@ -214,6 +215,7 @@ int main(int argc, char **argv) {
     cv::Mat color, depth;
     double timestamp = 0.0;
     vector<ORB_SLAM3::IMU::Point> vImuMeas;
+    int frame_count = 0;
     
     while (true) {
         // Get frames from camera
@@ -229,13 +231,17 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        // Resize images if needed
-        if (imageScale != 1.f) {
-            int width = color.cols * imageScale;
-            int height = color.rows * imageScale;
-            cv::resize(color, color, cv::Size(width, height), 0, 0, cv::INTER_LINEAR);
-            cv::resize(depth, depth, cv::Size(width, height), 0, 0, cv::INTER_NEAREST);
-        }
+        // // Manual resizing for performance (since ORB-SLAM3 internal resizing didn't work)
+        // if (imageScale != 1.f) {
+        //     int width = color.cols * imageScale;
+        //     int height = color.rows * imageScale;
+        //     cv::resize(color, color, cv::Size(width, height), 0, 0, cv::INTER_LINEAR);
+        //     cv::resize(depth, depth, cv::Size(width, height), 0, 0, cv::INTER_NEAREST);
+            
+        //     if (frame_count % 30 == 1) {
+        //         cout << "Resized to: [" << width << " x " << height << "]" << endl;
+        //     }
+        // }
 
         // Pass the images and IMU data to the SLAM system
         auto start = std::chrono::steady_clock::now();

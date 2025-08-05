@@ -198,13 +198,13 @@ int main(int argc, char **argv) {
 
         frame_count++;
         
-        // Resize images if needed
-        if (imageScale != 1.f) {
-            int width = color.cols * imageScale;
-            int height = color.rows * imageScale;
-            cv::resize(color, color, cv::Size(width, height), 0, 0, cv::INTER_LINEAR);
-            cv::resize(depth, depth, cv::Size(width, height), 0, 0, cv::INTER_NEAREST);
-        }
+        // // Resize images if needed
+        // if (imageScale != 1.f) {
+        //     int width = color.cols * imageScale;
+        //     int height = color.rows * imageScale;
+        //     cv::resize(color, color, cv::Size(width, height), 0, 0, cv::INTER_LINEAR);
+        //     cv::resize(depth, depth, cv::Size(width, height), 0, 0, cv::INTER_NEAREST);
+        // }
 
         // Pass the images to the SLAM system (full resolution)
         auto start = std::chrono::steady_clock::now();
