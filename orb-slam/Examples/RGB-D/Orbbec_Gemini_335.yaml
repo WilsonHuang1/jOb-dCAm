@@ -7,10 +7,10 @@
 Camera.type: "PinHole"
 
 # Camera calibration parameters (OLD format uses Camera.fx instead of Camera1.fx)
-Camera.fx: 1035.81
-Camera.fy: 1036.61
-Camera.cx: 965.283
-Camera.cy: 540.698
+Camera.fx: 690.54
+Camera.fy: 691.07
+Camera.cx: 643.52
+Camera.cy: 360.47
 
 Camera.k1: 0.009173   
 Camera.k2: -0.052995  
@@ -18,8 +18,8 @@ Camera.p1: -0.000152
 Camera.p2: -0.000378
 
 # Camera resolution - MUST MATCH YOUR CAMERA
-Camera.width: 1920
-Camera.height: 1080
+Camera.width: 1280
+Camera.height: 720
 
 # Camera frames per second
 Camera.fps: 30
@@ -27,7 +27,7 @@ Camera.fps: 30
 # Color order (0: BGR, 1: RGB)
 Camera.RGB: 1
 
-# IMAGE SCALING
+# # IMAGE SCALING
 Camera.imageScale: 0.5
 
 # RGBD specific parameters (OLD format)
@@ -50,10 +50,10 @@ Tbc: !!opencv-matrix
          0.0, 0.0, 0.0, 1.0]
 
 # IMU parameters (based on your output)
-IMU.NoiseGyro: 0.1
-IMU.NoiseAcc: 0.01
-IMU.GyroWalk: 2e-06
-IMU.AccWalk: 8e-05
+IMU.NoiseGyro: 0.00032
+IMU.NoiseAcc: 0.004
+IMU.GyroWalk: 2e-05
+IMU.AccWalk: 8e-04
 IMU.Frequency: 1000
 
 #--------------------------------------------------------------------------------------------

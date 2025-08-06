@@ -1,24 +1,25 @@
 %YAML:1.0
 
 #--------------------------------------------------------------------------------------------
-# Camera Parameters - OLD FORMAT (no File.version!)
+# Camera Parameters - Calibrated for YOUR Orbbec Gemini 335
 #--------------------------------------------------------------------------------------------
 
 Camera.type: "PinHole"
 
-# Camera calibration parameters (OLD format uses Camera.fx instead of Camera1.fx)
-# 1280/1980 = 0.6666666667
-Camera.fx: 690.54
-Camera.fy: 691.07
-Camera.cx: 643.52
-Camera.cy: 360.47
+# Camera calibration parameters from YOUR extracted data
+# Using 1280x720 resolution (scaled from 1920x1080)
+Camera.fx: 690.54   # = 1035.805420 * (1280/1920)
+Camera.fy: 691.07   # = 1036.608398 * (1280/1920)
+Camera.cx: 643.52   # = 965.283142 * (1280/1920)
+Camera.cy: 360.47   # = 540.698120 * (1280/1920)
 
-Camera.k1: 0.009173   
-Camera.k2: -0.052995  
-Camera.p1: -0.000152  
+# Distortion parameters from YOUR camera
+Camera.k1: 0.009173
+Camera.k2: -0.052995
+Camera.p1: -0.000152
 Camera.p2: -0.000378
 
-# Camera resolution - MUST MATCH YOUR CAMERA
+# Camera resolution - matching the code
 Camera.width: 1280
 Camera.height: 720
 
@@ -28,33 +29,54 @@ Camera.fps: 30
 # Color order (0: BGR, 1: RGB)
 Camera.RGB: 1
 
-# # IMAGE SCALING
-# Camera.imageScale: 0.5
+# IMAGE SCALING
+Camera.imageScale: 0.5
 
-# RGBD specific parameters (OLD format)
+# RGBD specific parameters
 DepthMapFactor: 1000.0
 
-# RGB-D baseline parameter
+# RGB-D baseline parameter (estimated)
 Camera.bf: 40.0 
 
-# Depth threshold
+# Depth threshold (meters)
 ThDepth: 40.0
 
-# IMU to Camera transformation matrix (required for RGB-D-Inertial)
+#--------------------------------------------------------------------------------------------
+# IMU Parameters - PROPERLY CALIBRATED from YOUR extracted values
+#--------------------------------------------------------------------------------------------
+
+# IMU to Camera transformation matrix (Color camera to IMU)
+# Computed from: Depth->Color transform + Depth->IMU transform
+# This combines the depth-to-color and depth-to-IMU transformations
 Tbc: !!opencv-matrix
    rows: 4
    cols: 4
    dt: f
-   data: [0.999998, 0.001045, -0.001768, -0.013575029503,
-         -0.001045, 0.999999, -0.000077, -0.000153629139,
-         0.001768, 0.000078, 0.999998, -0.019000161106,
-         0.0, 0.0, 0.0, 1.0]
+   data: [0.999998, 0.001045, -0.001768, -0.013605,
+         -0.001045, 0.999999, -0.000077, -0.000285,
+          0.001768, 0.000078, 0.999998, -0.018900,
+          0.0, 0.0, 0.0, 1.0]
 
-# IMU parameters (based on your output)
-IMU.NoiseGyro: 0.1
-IMU.NoiseAcc: 0.01
-IMU.GyroWalk: 2e-06
-IMU.AccWalk: 8e-05
+# IMU noise parameters from YOUR ACTUAL SENSOR
+# These are the REAL values from your Gemini 335 IMU
+
+# Accelerometer noise density: 0.000400 m/s^2/sqrt(Hz) from your sensor
+# Multiplied by 10 for better convergence as recommended
+IMU.NoiseAcc: 0.004  # 0.000400 * 10
+
+# Gyroscope noise density: 0.000032 rad/s/sqrt(Hz) from your sensor  
+# Multiplied by 10 for better convergence
+IMU.NoiseGyro: 0.00032  # 0.000032 * 10
+
+# Accelerometer random walk: 0.000080 m/s^3/sqrt(Hz) from your sensor
+# Multiplied by 10 for robustness
+IMU.AccWalk: 0.0008  # 0.000080 * 10
+
+# Gyroscope random walk: 0.000002 rad/s^2/sqrt(Hz) from your sensor
+# Multiplied by 10 for robustness  
+IMU.GyroWalk: 0.00002  # 0.000002 * 10
+
+# IMU sampling frequency
 IMU.Frequency: 1000
 
 #--------------------------------------------------------------------------------------------
