@@ -371,7 +371,7 @@ int main(int argc, char **argv) {
                  << " | Track: " << std::setprecision(3) << ttrack << "s";
             
             if (state == 2) { // OK
-                cout << " | STATUS: TRACKING OK ✓";
+                cout << " | STATUS: TRACKING OK";
             } else if (state == 0) { // NOT_INITIALIZED
                 cout << " | STATUS: INITIALIZING...";
             } else {

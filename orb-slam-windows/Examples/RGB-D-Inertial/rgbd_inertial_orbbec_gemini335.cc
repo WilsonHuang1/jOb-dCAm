@@ -598,7 +598,7 @@ int main(int argc, char **argv) {
                  << " | Track: " << std::setprecision(3) << ttrack << "s";
             
             if (state == 2) {
-                cout << " | TRACKING OK ✓";
+                cout << " | TRACKING OK";
                 auto translation = pose.translation();
                 cout << " | Pos: [" << translation.x() << ", " 
                      << translation.y() << ", " << translation.z() << "]";
