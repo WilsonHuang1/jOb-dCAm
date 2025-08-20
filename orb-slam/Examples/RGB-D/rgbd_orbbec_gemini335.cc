@@ -226,12 +226,12 @@ public:
             
             // Try to configure COLOR stream
             try {
-                std::cout << "[DEBUG] Trying COLOR: 640x360@60fps" << std::endl;
-                config_->enableVideoStream(OB_STREAM_COLOR, 640, 360, 60, OB_FORMAT_RGB);
+                std::cout << "[DEBUG] Trying COLOR: 1920x1080@30fps" << std::endl;
+                config_->enableVideoStream(OB_STREAM_COLOR, 1920, 1080, 30, OB_FORMAT_RGB);
                 color_configured = true;
-                std::cout << "[DEBUG] COLOR configured: 640x360@60fps ✓" << std::endl;
+                std::cout << "[DEBUG] COLOR configured: 1920x1080@30fps ✓" << std::endl;
             } catch (const ob::Error& e) {
-                std::cout << "[WARNING] COLOR 640x360@60fps failed: " << e.what() << std::endl;
+                std::cout << "[WARNING] COLOR 1920x1080@30fps failed: " << e.what() << std::endl;
                 
                 try {
                     std::cout << "[DEBUG] Trying COLOR: 640x360@30fps" << std::endl;
@@ -254,12 +254,12 @@ public:
             
             // Try to configure DEPTH stream
             try {
-                std::cout << "[DEBUG] Trying DEPTH: 640x360@60fps" << std::endl;
-                config_->enableVideoStream(OB_STREAM_DEPTH, 640, 360, 60, OB_FORMAT_Y16);
+                std::cout << "[DEBUG] Trying DEPTH: 848x480@30fps" << std::endl;
+                config_->enableVideoStream(OB_STREAM_DEPTH, 848, 480, 30, OB_FORMAT_Y16);
                 depth_configured = true;
-                std::cout << "[DEBUG] DEPTH configured: 640x360@60fps ✓" << std::endl;
+                std::cout << "[DEBUG] DEPTH configured: 848x480@30fps ✓" << std::endl;
             } catch (const ob::Error& e) {
-                std::cout << "[WARNING] DEPTH 640x360@60fps failed: " << e.what() << std::endl;
+                std::cout << "[WARNING] DEPTH 848x480@30fps failed: " << e.what() << std::endl;
                 
                 try {
                     std::cout << "[DEBUG] Trying DEPTH: 640x360@30fps" << std::endl;
@@ -307,15 +307,15 @@ public:
             std::cout << "\n[DEBUG] Getting camera intrinsics..." << std::endl;
             std::shared_ptr<ob::VideoStreamProfile> colorProfile = nullptr;
             std::shared_ptr<ob::VideoStreamProfile> depthProfile = nullptr;
-            
-            // Search for 640x360 color profile
+
+            // Search for 1920x1080 color profile first, then fallback
             try {
                 auto colorSensor = device_->getSensor(OB_SENSOR_COLOR);
                 auto colorProfiles = colorSensor->getStreamProfileList();
                 
                 for (uint32_t i = 0; i < colorProfiles->getCount(); i++) {
                     auto profile = colorProfiles->getProfile(i)->as<ob::VideoStreamProfile>();
-                    if (profile->getWidth() == 640 && profile->getHeight() == 360) {
+                    if (profile->getWidth() == 1920 && profile->getHeight() == 1080) {
                         colorProfile = profile;
                         std::cout << "[DEBUG] Found matching color profile: " << profile->getWidth() 
                                 << "x" << profile->getHeight() << "@" << profile->getFps() << "fps" << std::endl;
@@ -334,14 +334,14 @@ public:
                 colorProfile = profiles->getProfile(0)->as<ob::VideoStreamProfile>();
             }
 
-            // Search for 640x360 depth profile
+            // Search for 848x480 depth profile first, then fallback
             try {
                 auto depthSensor = device_->getSensor(OB_SENSOR_DEPTH);
                 auto depthProfiles = depthSensor->getStreamProfileList();
                 
                 for (uint32_t i = 0; i < depthProfiles->getCount(); i++) {
                     auto profile = depthProfiles->getProfile(i)->as<ob::VideoStreamProfile>();
-                    if (profile->getWidth() == 640 && profile->getHeight() == 360) {
+                    if (profile->getWidth() == 848 && profile->getHeight() == 480) {
                         depthProfile = profile;
                         std::cout << "[DEBUG] Found matching depth profile: " << profile->getWidth() 
                                 << "x" << profile->getHeight() << "@" << profile->getFps() << "fps" << std::endl;
@@ -502,19 +502,20 @@ public:
                 sw_transformer_.fillDepthHoles(depth);
             }
             
-            // Force resize to 640x360 if needed
-            if (color.size() != cv::Size(640, 360)) {
+            // Force resize to target resolution if needed  
+            cv::Size target_size(1920, 1080);  // Target 1080p
+            if (color.size() != target_size) {
                 if (debug_this_frame) {
-                    std::cout << "[DEBUG] Resizing color " << color.size() << " -> 640x360" << std::endl;
+                    std::cout << "[DEBUG] Resizing color " << color.size() << " -> " << target_size << std::endl;
                 }
-                cv::resize(color, color, cv::Size(640, 360));
+                cv::resize(color, color, target_size);
             }
-            
-            if (depth.size() != cv::Size(640, 360)) {
+
+            if (depth.size() != target_size) {
                 if (debug_this_frame) {
-                    std::cout << "[DEBUG] Resizing depth " << depth.size() << " -> 640x360" << std::endl;
+                    std::cout << "[DEBUG] Resizing depth " << depth.size() << " -> " << target_size << std::endl;
                 }
-                cv::resize(depth, depth, cv::Size(640, 360), 0, 0, cv::INTER_NEAREST);
+                cv::resize(depth, depth, target_size, 0, 0, cv::INTER_NEAREST);
             }
             
             if (debug_this_frame) {
@@ -552,182 +553,261 @@ private:
 };
 
 void GenerateMapPointConverter() {
-    std::cout << "[MESH] Generating MEMORY-SAFE MULTI-CORE ORB-SLAM3 converter..." << std::endl;
+    std::cout << "[MESH] Generating INTEGRATED TUBE MESH GENERATOR..." << std::endl;
     std::string folder = "3D_Reconstruction_Data/";
     
-    std::ofstream script(folder + "memory_safe_orb_converter.py");
+    std::ofstream script(folder + "tube_mesh_generator.py");
     script << "#!/usr/bin/env python3\n";
-    script << "# MEMORY-SAFE MULTI-CORE ORB-SLAM3 Map Points to Mesh Converter\n";
-    script << "# Optimized for 16GB RAM systems with intelligent memory management\n";
-    script << "# Auto-generated by rgbd_orbbec_gemini335.cc\n\n";
+    script << "\"\"\"\n";
+    script << "TUBE-SPECIFIC MESH GENERATOR\n";
+    script << "Optimized for metal cuboid tubes and geometric objects\n";
+    script << "Handles sparse points and sharp edges properly\n";
+    script << "\"\"\"\n\n";
     
-    script << "import numpy as np, open3d as o3d, os, time, gc\n";
-    script << "from multiprocessing import cpu_count\n";
-    script << "from concurrent.futures import ThreadPoolExecutor\n";
-    script << "try: import psutil\n";
-    script << "except: os.system('pip install psutil'); import psutil\n\n";
+    script << "import numpy as np\nimport open3d as o3d\nimport os\nimport time\nimport psutil\n\n";
     
-    // Memory monitoring functions
-    script << "def get_memory_info():\n";
-    script << "    mem = psutil.virtual_memory()\n";
-    script << "    return {'available_gb': mem.available / (1024**3), 'used_gb': mem.used / (1024**3), 'percent': mem.percent, 'total_gb': mem.total / (1024**3)}\n\n";
-    
+    // Memory monitoring
     script << "def print_memory_status(step=''):\n";
-    script << "    mem = get_memory_info()\n";
-    script << "    print(f'💾 Memory: {mem[\"used_gb\"]:.1f}/{mem[\"total_gb\"]:.1f}GB ({mem[\"percent\"]:.1f}%) - {step}')\n\n";
+    script << "    mem = psutil.virtual_memory()\n";
+    script << "    print(f'💾 Memory: {mem.used / (1024**3):.1f}/{mem.total / (1024**3):.1f}GB ({mem.percent:.1f}%) - {step}')\n\n";
     
-    script << "def adaptive_worker_count():\n";
-    script << "    mem = get_memory_info()\n";
-    script << "    if mem['available_gb'] < 4: workers = 2; print('⚠️ Low memory - using 2 workers')\n";
-    script << "    elif mem['available_gb'] < 8: workers = min(4, cpu_count()); print(f'🔧 Moderate memory - using {workers} workers')\n";
-    script << "    else: workers = min(cpu_count(), 8); print(f'✅ Good memory - using {workers} workers')\n";
-    script << "    return workers\n\n";
-    
-    // Memory-safe loading
-    script << "def load_map_points_safe(filename):\n";
-    script << "    print(f'📊 Loading {filename} with memory safety...')\n";
-    script << "    print_memory_status('before loading')\n";
-    script << "    if not os.path.exists(filename): return None\n";
+    // Load ORB-SLAM points
+    script << "def load_orb_slam_map_points(filename):\n";
+    script << "    print(f'📊 Loading ORB-SLAM3 map points from {filename}...')\n";
+    script << "    if not os.path.exists(filename): print(f'❌ File not found: {filename}'); return None\n";
     script << "    try:\n";
-    script << "        file_size_mb = os.path.getsize(filename) / (1024 * 1024)\n";
-    script << "        print(f'📁 File size: {file_size_mb:.1f}MB')\n";
-    script << "        if file_size_mb > 50:\n";
-    script << "            try:\n";
-    script << "                import pandas as pd\n";
-    script << "                chunks = []\n";
-    script << "                for chunk in pd.read_csv(filename, chunksize=50000):\n";
-    script << "                    chunks.append(chunk[['pos_x', 'pos_y', 'pos_z']].values)\n";
-    script << "                points = np.vstack(chunks)\n";
-    script << "                del chunks; print('⚡ Large file loaded with chunking')\n";
-    script << "            except: coords = np.genfromtxt(filename, delimiter=',', skip_header=1); points = coords[:, :3]; del coords\n";
-    script << "        else: coords = np.genfromtxt(filename, delimiter=',', skip_header=1); points = coords[:, :3]; del coords\n";
-    script << "        gc.collect()\n";
-    script << "        print(f'✅ Loaded {len(points):,} points')\n";
-    script << "        print_memory_status('after loading')\n";
+    script << "        coords = np.genfromtxt(filename, delimiter=',', skip_header=1)\n";
+    script << "        if coords.size == 0: print('❌ No data in file!'); return None\n";
+    script << "        if coords.ndim == 1: coords = coords.reshape(1, -1)\n";
+    script << "        points = coords[:, :3]\n";
+    script << "        print(f'✅ Loaded {len(points):,} ORB-SLAM3 map points')\n";
+    script << "        print(f'📏 Point cloud spans:')\n";
+    script << "        print(f'   X: {np.min(points[:, 0]):.3f} to {np.max(points[:, 0]):.3f} m')\n";
+    script << "        print(f'   Y: {np.min(points[:, 1]):.3f} to {np.max(points[:, 1]):.3f} m')\n";
+    script << "        print(f'   Z: {np.min(points[:, 2]):.3f} to {np.max(points[:, 2]):.3f} m')\n";
     script << "        return points\n";
-    script << "    except Exception as e: print(f'❌ Error: {e}'); return None\n\n";
+    script << "    except Exception as e: print(f'❌ Error loading map points: {e}'); return None\n\n";
     
-    // Memory-safe normal estimation
-    script << "def memory_safe_normals(pcd):\n";
+    // Analyze geometry
+    script << "def analyze_tube_geometry(points):\n";
+    script << "    print('🔍 Analyzing tube geometry...')\n";
+    script << "    min_coords, max_coords = np.min(points, axis=0), np.max(points, axis=0)\n";
+    script << "    dimensions = max_coords - min_coords\n";
+    script << "    print(f'📐 Tube dimensions:')\n";
+    script << "    print(f'   Width (X):  {dimensions[0]:.3f} m')\n";
+    script << "    print(f'   Height (Y): {dimensions[1]:.3f} m')\n";
+    script << "    print(f'   Length (Z): {dimensions[2]:.3f} m')\n";
+    script << "    volume = np.prod(dimensions)\n";
+    script << "    density = len(points) / volume if volume > 0 else 0\n";
+    script << "    print(f'📊 Point density: {density:.1f} points/m³')\n";
+    script << "    is_sparse = len(points) < 1000 or density < 100\n";
+    script << "    if is_sparse: print('⚠️ Sparse point cloud detected - using geometric reconstruction')\n";
+    script << "    else: print('✅ Good point density - using standard reconstruction')\n";
+    script << "    return {'dimensions': dimensions, 'density': density, 'is_sparse': is_sparse, 'center': (min_coords + max_coords) / 2, 'bbox_min': min_coords, 'bbox_max': max_coords}\n\n";
+    
+    // Optimized normals
+    script << "def tube_optimized_normals(pcd, geometry_info):\n";
+    script << "    print('📐 Tube-optimized normal estimation...')\n";
     script << "    point_count = len(pcd.points)\n";
-    script << "    mem = get_memory_info()\n";
-    script << "    print(f'📐 Memory-safe normals for {point_count:,} points...')\n";
-    script << "    print_memory_status('before normals')\n";
-    script << "    if point_count > 100000 or mem['available_gb'] < 4:\n";
-    script << "        print('⚡ Large dataset or low memory - fast normals')\n";
-    script << "        search_param = o3d.geometry.KDTreeSearchParamHybrid(radius=0.15, max_nn=10)\n";
-    script << "    elif point_count > 50000 or mem['available_gb'] < 6:\n";
-    script << "        print('🔧 Medium dataset - balanced normals')\n";
-    script << "        search_param = o3d.geometry.KDTreeSearchParamHybrid(radius=0.12, max_nn=15)\n";
+    script << "    if geometry_info['is_sparse']:\n";
+    script << "        print('⚡ Sparse tube - using large radius for normals')\n";
+    script << "        max_dim = np.max(geometry_info['dimensions'])\n";
+    script << "        radius = max(0.05, max_dim / 20)\n";
+    script << "        max_nn = min(30, max(10, point_count // 10))\n";
+    script << "        search_param = o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=max_nn)\n";
+    script << "        print(f'   Using radius: {radius:.3f}m, max_nn: {max_nn}')\n";
     script << "    else:\n";
-    script << "        print('✨ Small dataset - quality normals')\n";
-    script << "        search_param = o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=20)\n";
-    script << "    pcd.estimate_normals(search_param=search_param, fast_normal_computation=True)\n";
-    script << "    print_memory_status('after normals')\n";
+    script << "        print('✨ Dense tube - using standard normals')\n";
+    script << "        search_param = o3d.geometry.KDTreeSearchParamHybrid(radius=0.02, max_nn=20)\n";
+    script << "    pcd.estimate_normals(search_param=search_param)\n";
+    script << "    try: pcd.orient_normals_consistent_tangent_plane(100); print('✅ Normals oriented consistently')\n";
+    script << "    except: print('⚠️ Could not orient normals consistently')\n";
     script << "    return pcd\n\n";
     
-    // Memory-safe meshing
-    script << "def memory_safe_meshing(pcd):\n";
-    script << "    point_count, mem = len(pcd.points), get_memory_info()\n";
-    script << "    print(f'🔨 Memory-safe meshing for {point_count:,} points...')\n";
-    script << "    print_memory_status('before meshing')\n";
-    script << "    # Choose method based on memory and point count\n";
-    script << "    if point_count > 50000 or mem['available_gb'] < 4:\n";
-    script << "        print('⚡ Fast Alpha Shapes (memory optimized)...')\n";
-    script << "        alphas = [0.1, 0.2, 0.3]\n";
-    script << "        def try_alpha(alpha):\n";
-    script << "            try:\n";
-    script << "                mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha)\n";
-    script << "                count = len(mesh.triangles)\n";
-    script << "                if 100 < count < 500000: return alpha, count, mesh\n";
-    script << "                else: del mesh; return alpha, 0, None\n";
-    script << "            except: return alpha, 0, None\n";
-    script << "        max_workers = min(len(alphas), adaptive_worker_count() // 2)\n";
-    script << "        with ThreadPoolExecutor(max_workers=max_workers) as executor:\n";
-    script << "            results = list(executor.map(try_alpha, alphas))\n";
-    script << "        best = max(results, key=lambda x: x[1])\n";
-    script << "        for a, c, m in results:\n";
-    script << "            if m is not best[2] and m is not None: del m\n";
-    script << "        gc.collect()\n";
-    script << "        if best[1] > 100:\n";
-    script << "            print(f'✅ Alpha Shapes: {best[1]:,} triangles')\n";
-    script << "            return best[2]\n";
-    script << "    else:\n";
-    script << "        print('✨ High quality Poisson...')\n";
+    // Alpha shapes
+    script << "def create_tube_mesh_alpha_shapes(pcd, geometry_info):\n";
+    script << "    print('🔨 Creating tube mesh with Alpha Shapes...')\n";
+    script << "    min_dim = np.min(geometry_info['dimensions'])\n";
+    script << "    base_alpha = min_dim / 15\n";
+    script << "    point_density = len(pcd.points) / (geometry_info['dimensions'][0] * geometry_info['dimensions'][1])\n";
+    script << "    density_factor = max(0.5, min(2.0, point_density / 1000))\n";
+    script << "    alpha_values = [0.002 / density_factor, 0.004 / density_factor, 0.008 / density_factor, 0.015 / density_factor, 0.022 / density_factor]\n";
+    script << "    print(f'🎯 Adaptive alphas: {[f\"{a*1000:.1f}mm\" for a in alpha_values]}')\n";
+    script << "    print(f'🔍 Testing alpha values: {[f\"{a:.4f}\" for a in alpha_values]}')\n";
+    script << "    best_mesh, best_triangle_count, best_alpha = None, 0, 0\n";
+    script << "    for alpha in alpha_values:\n";
     script << "        try:\n";
-    script << "            mesh, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=7)\n";
-    script << "            bbox = pcd.get_axis_aligned_bounding_box()\n";
-    script << "            mesh = mesh.crop(bbox)\n";
-    script << "            print(f'✅ Poisson: {len(mesh.triangles):,} triangles')\n";
-    script << "            return mesh\n";
-    script << "        except: pass\n";
-    script << "    print('❌ All meshing failed')\n";
-    script << "    return None\n\n";
+    script << "            print(f'   Testing α = {alpha:.4f}...')\n";
+    script << "            mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha)\n";
+    script << "            triangle_count = len(mesh.triangles)\n";
+    script << "            print(f'      Result: {triangle_count:,} triangles')\n";
+    script << "            if 50 < triangle_count < 100000 and triangle_count > best_triangle_count:\n";
+    script << "                if best_mesh is not None: del best_mesh\n";
+    script << "                best_mesh, best_triangle_count, best_alpha = mesh, triangle_count, alpha\n";
+    script << "            else: del mesh\n";
+    script << "        except Exception as e: print(f'      Failed: {e}')\n";
+    script << "    if best_mesh is not None:\n";
+    script << "        print(f'✅ Best Alpha Shapes result: α={best_alpha:.4f}, {best_triangle_count:,} triangles')\n";
+    script << "        return best_mesh\n";
+    script << "    else: print('❌ No suitable alpha shapes mesh found'); return None\n\n";
+    
+    // Ball pivoting  
+    script << "def create_tube_mesh_ball_pivoting(pcd, geometry_info):\n";
+    script << "    print('🔨 Creating tube mesh with Ball Pivoting...')\n";
+    script << "    try:\n";
+    script << "        distances = pcd.compute_nearest_neighbor_distance()\n";
+    script << "        avg_dist = np.mean(distances)\n";
+    script << "        print(f'📊 Average point distance: {avg_dist:.4f}m')\n";
+    script << "        radii = [0.002, 0.003, 0.004, 0.006, 0.008, 0.012, 0.016]\n";
+    script << "        print(f'🎯 Ultra-precision radii: {[f\"{r*1000:.0f}mm\" for r in radii]}')\n";
+    script << "        print(f'🔍 Using radii: {[f\"{r:.4f}\" for r in radii]}')\n";
+    script << "        mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(pcd, o3d.utility.DoubleVector(radii))\n";
+    script << "        triangle_count = len(mesh.triangles)\n";
+    script << "        print(f'✅ Ball Pivoting result: {triangle_count:,} triangles')\n";
+    script << "        return mesh if triangle_count > 50 else None\n";
+    script << "    except Exception as e: print(f'❌ Ball Pivoting failed: {e}'); return None\n\n";
+    
+    // Poisson
+    script << "def create_tube_mesh_poisson(pcd, geometry_info):\n";
+    script << "    print('🔨 Creating tube mesh with Poisson...')\n";
+    script << "    try:\n";
+    script << "        tube_area = geometry_info['dimensions'][0] * geometry_info['dimensions'][1]\n";
+    script << "        point_density = len(pcd.points) / tube_area\n";
+    script << "        base_depth = 8\n";
+    script << "        if point_density > 2000: depth = base_depth + 2\n";
+    script << "        elif point_density > 1000: depth = base_depth + 1\n";
+    script << "        else: depth = base_depth\n";
+    script << "        if 0.25 <= tube_area <= 0.35: depth += 1\n";
+    script << "        print(f'🎯 Optimized depth: {depth} (density: {point_density:.0f} pts/m²)')\n";
+    script << "        if tube_area >= 0.25: depth += 1; print(f'📏 Medium tube detected - increased depth to {depth}')\n";
+    script << "        mesh, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=depth, width=0, scale=1.1, linear_fit=False)\n";
+    script << "        bbox = pcd.get_axis_aligned_bounding_box()\n";
+    script << "        mesh = mesh.crop(bbox)\n";
+    script << "        triangle_count = len(mesh.triangles)\n";
+    script << "        print(f'✅ Poisson result: {triangle_count:,} triangles')\n";
+    script << "        return mesh if triangle_count > 100 else None\n";
+    script << "    except Exception as e: print(f'❌ Poisson failed: {e}'); return None\n\n";
+    
+    // Try all methods
+    script << "def try_all_tube_methods(pcd, geometry_info):\n";
+    script << "    print('\\n🔄 Testing all tube-optimized meshing methods...')\n";
+    script << "    methods = [('Alpha Shapes', create_tube_mesh_alpha_shapes), ('Ball Pivoting', create_tube_mesh_ball_pivoting), ('Poisson', create_tube_mesh_poisson)]\n";
+    script << "    best_mesh, best_triangle_count, best_method = None, 0, ''\n";
+    script << "    for method_name, method_func in methods:\n";
+    script << "        print(f'\\n🔄 Trying {method_name} for tube reconstruction...')\n";
+    script << "        try:\n";
+    script << "            mesh = method_func(pcd, geometry_info)\n";
+    script << "            if mesh is not None:\n";
+    script << "                triangle_count = len(mesh.triangles)\n";
+    script << "                print(f'✅ {method_name}: {triangle_count:,} triangles')\n";
+    script << "                if triangle_count > best_triangle_count:\n";
+    script << "                    if best_mesh is not None: del best_mesh\n";
+    script << "                    best_mesh, best_triangle_count, best_method = mesh, triangle_count, method_name\n";
+    script << "                else: del mesh\n";
+    script << "            else: print(f'❌ {method_name}: failed')\n";
+    script << "        except Exception as e: print(f'❌ {method_name}: error - {e}')\n";
+    script << "    if best_mesh is not None: print(f'\\n🏆 Best method for tube: {best_method} with {best_triangle_count:,} triangles')\n";
+    script << "    else: print('\\n⚠️ No method produced a valid tube mesh')\n";
+    script << "    return best_mesh\n\n";
+    
+    // Clean mesh
+    script << "def clean_tube_mesh(mesh):\n";
+    script << "    if mesh is None: return None\n";
+    script << "    print('🧹 Tube-specific mesh cleaning...')\n";
+    script << "    print_memory_status('before cleaning')\n";
+    script << "    original_triangles = len(mesh.triangles)\n";
+    script << "    mesh.remove_degenerate_triangles(); mesh.remove_duplicated_triangles()\n";
+    script << "    mesh.remove_duplicated_vertices(); mesh.remove_non_manifold_edges()\n";
+    script << "    cleaned_triangles = len(mesh.triangles)\n";
+    script << "    removed = original_triangles - cleaned_triangles\n";
+    script << "    print(f'🧹 Cleaned: removed {removed:,} bad triangles')\n";
+    script << "    print(f'📊 Final mesh: {len(mesh.vertices):,} vertices, {cleaned_triangles:,} triangles')\n";
+    script << "    print_memory_status('after cleaning')\n";
+    script << "    return mesh\n\n";
+    
+    // Save results
+    script << "def save_tube_results(mesh, pcd, geometry_info):\n";
+    script << "    print('💾 Saving tube reconstruction results...')\n";
+    script << "    print_memory_status('before saving')\n";
+    script << "    try: o3d.io.write_point_cloud('tube_pointcloud.ply', pcd); print('✅ Tube point cloud: tube_pointcloud.ply')\n";
+    script << "    except Exception as e: print(f'❌ Point cloud save failed: {e}')\n";
+    script << "    if mesh is not None:\n";
+    script << "        try:\n";
+    script << "            mesh.compute_vertex_normals(); mesh.compute_triangle_normals()\n";
+    script << "            o3d.io.write_triangle_mesh('tube_mesh.stl', mesh); print('✅ Tube mesh STL: tube_mesh.stl')\n";
+    script << "            o3d.io.write_triangle_mesh('tube_mesh.ply', mesh); print('✅ Tube mesh PLY: tube_mesh.ply')\n";
+    script << "            o3d.io.write_triangle_mesh('tube_mesh.obj', mesh); print('✅ Tube mesh OBJ: tube_mesh.obj')\n";
+    script << "            print(f'\\n📊 Tube mesh statistics:')\n";
+    script << "            print(f'   Vertices: {len(mesh.vertices):,}')\n";
+    script << "            print(f'   Triangles: {len(mesh.triangles):,}')\n";
+    script << "        except Exception as e: print(f'❌ Mesh save failed: {e}')\n";
+    script << "    try:\n";
+    script << "        with open('tube_analysis.txt', 'w') as f:\n";
+    script << "            f.write('# Tube Geometry Analysis\\n')\n";
+    script << "            f.write(f'Dimensions: {geometry_info[\"dimensions\"]}\\n')\n";
+    script << "            f.write(f'Point density: {geometry_info[\"density\"]:.1f} points/m³\\n')\n";
+    script << "            f.write(f'Is sparse: {geometry_info[\"is_sparse\"]}\\n')\n";
+    script << "            f.write(f'Center: {geometry_info[\"center\"]}\\n')\n";
+    script << "        print('✅ Geometry analysis: tube_analysis.txt')\n";
+    script << "    except Exception as e: print(f'❌ Analysis save failed: {e}')\n";
+    script << "    print_memory_status('after saving')\n\n";
     
     // Main function
     script << "def main():\n";
-    script << "    print('💾 === MEMORY-SAFE MULTI-CORE ORB-SLAM3 CONVERTER ===')\n";
-    script << "    mem = get_memory_info()\n";
-    script << "    print(f'💻 System: {cpu_count()} cores, {mem[\"total_gb\"]:.1f}GB RAM')\n";
-    script << "    print(f'💾 Available: {mem[\"available_gb\"]:.1f}GB ({100-mem[\"percent\"]:.1f}% free)')\n";
-    script << "    if mem['available_gb'] < 2: print('⚠️ WARNING: Very low memory!')\n";
-    script << "    elif mem['available_gb'] < 4: print('⚠️ Low memory - using conservative settings')\n";
-    script << "    print('🎯 Memory-optimized ORB-SLAM3 map point processing\\n')\n";
+    script << "    print('🏗️ === TUBE-SPECIFIC MESH GENERATOR ===')\n";
+    script << "    print('🔧 Optimized for metal cuboid tubes and geometric objects')\n";
+    script << "    print('⚡ Handles sparse points and sharp edges\\n')\n";
+    script << "    mem = psutil.virtual_memory()\n";
+    script << "    print(f'💻 System: {mem.total / (1024**3):.1f}GB RAM available')\n";
     script << "    total_start = time.time()\n";
-    script << "    # Load map points safely\n";
-    script << "    points = None\n";
-    script << "    for filename in ['ref_map_points.txt', 'map_points.txt']:\n";
-    script << "        points = load_map_points_safe(filename)\n";
-    script << "        if points is not None: break\n";
-    script << "    if points is None: print('❌ No map files found!'); return\n";
-    script << "    if len(points) < 50: print('⚠️ Too few points'); return\n";
-    script << "    print(f'📍 Processing {len(points):,} map points')\n";
-    script << "    # Create point cloud\n";
+    script << "    map_files = ['ref_map_points.txt', 'map_points.txt']\n";
+    script << "    points, source_file = None, ''\n";
+    script << "    for filename in map_files:\n";
+    script << "        if os.path.exists(filename):\n";
+    script << "            points = load_orb_slam_map_points(filename)\n";
+    script << "            if points is not None: source_file = filename; break\n";
+    script << "    if points is None:\n";
+    script << "        print('❌ No valid ORB-SLAM3 map point files found!')\n";
+    script << "        print('💡 Make sure you have \"map_points.txt\" or \"ref_map_points.txt\"')\n";
+    script << "        return\n";
+    script << "    print(f'📍 Using map points from: {source_file}')\n";
+    script << "    if len(points) < 20:\n";
+    script << "        print('⚠️ Too few points for tube reconstruction')\n";
+    script << "        print('💡 Need at least 20 points for geometric reconstruction')\n";
+    script << "        return\n";
+    script << "    geometry_info = analyze_tube_geometry(points)\n";
+    script << "    print(f'\\n🔄 Creating tube point cloud from {len(points):,} points...')\n";
     script << "    pcd = o3d.geometry.PointCloud()\n";
     script << "    pcd.points = o3d.utility.Vector3dVector(points)\n";
-    script << "    del points; gc.collect()  # Free memory\n";
-    script << "    # Add colors if memory allows\n";
-    script << "    if get_memory_info()['available_gb'] > 3:\n";
-    script << "        colors = np.tile([0.7, 0.3, 0.3], (len(pcd.points), 1))\n";
-    script << "        pcd.colors = o3d.utility.Vector3dVector(colors)\n";
-    script << "        del colors\n";
-    script << "    # Memory-safe processing\n";
-    script << "    pcd = memory_safe_normals(pcd)\n";
-    script << "    mesh = memory_safe_meshing(pcd)\n";
-    script << "    # Clean mesh if created\n";
-    script << "    if mesh is not None:\n";
-    script << "        print('🧹 Mesh cleanup...')\n";
-    script << "        mesh.remove_degenerate_triangles(); mesh.remove_duplicated_triangles()\n";
-    script << "        mesh.remove_duplicated_vertices(); mesh.remove_non_manifold_edges()\n";
-    script << "    # Save results\n";
-    script << "    print('💾 Saving with memory monitoring...')\n";
-    script << "    print_memory_status('before saving')\n";
-    script << "    try:\n";
-    script << "        o3d.io.write_point_cloud('safe_orb_points.ply', pcd)\n";
-    script << "        print('✅ Point cloud saved: safe_orb_points.ply')\n";
-    script << "        if mesh is not None:\n";
-    script << "            mesh.compute_vertex_normals(); mesh.compute_triangle_normals()\n";
-    script << "            o3d.io.write_triangle_mesh('safe_orb_mesh.stl', mesh)\n";
-    script << "            o3d.io.write_triangle_mesh('safe_orb_mesh.ply', mesh)\n";
-    script << "            print('✅ Mesh saved: safe_orb_mesh.stl')\n";
-    script << "            print(f'📊 Final: {len(mesh.vertices):,} vertices, {len(mesh.triangles):,} triangles')\n";
-    script << "        else: print('📊 Point cloud only: no mesh created')\n";
-    script << "    except Exception as e: print(f'❌ Save error: {e}')\n";
+    script << "    colors = np.tile([0.8, 0.8, 0.9], (len(points), 1))\n";
+    script << "    pcd.colors = o3d.utility.Vector3dVector(colors)\n";
+    script << "    pcd = tube_optimized_normals(pcd, geometry_info)\n";
+    script << "    mesh = try_all_tube_methods(pcd, geometry_info)\n";
+    script << "    if mesh is not None: mesh = clean_tube_mesh(mesh)\n";
+    script << "    save_tube_results(mesh, pcd, geometry_info)\n";
     script << "    total_time = time.time() - total_start\n";
-    script << "    print(f'🎉 Memory-safe conversion complete in {total_time:.1f}s!')\n";
-    script << "    print_memory_status('final')\n";
-    script << "    print('🎯 Files: safe_orb_mesh.stl, safe_orb_points.ply')\n";
-    script << "    print('🚀 Memory-optimized for 16GB systems!')\n\n";
+    script << "    print(f'\\n🎉 Tube reconstruction complete in {total_time:.1f}s!')\n";
+    script << "    if mesh is not None:\n";
+    script << "        print(f'\\n🎯 For SolidWorks (tube model):')\n";
+    script << "        print(f'   📄 Use: tube_mesh.stl')\n";
+    script << "        print(f'   🔧 Perfect for metal cuboid tube geometry')\n";
+    script << "        print(f'   📐 Maintains sharp edges and geometric features')\n";
+    script << "    else:\n";
+    script << "        print(f'\\n📊 Point cloud only: tube_pointcloud.ply')\n";
+    script << "        print(f'💡 Try adjusting scan distance or lighting for better results')\n";
+    script << "    print(f'\\n💡 Tube scanning tips:')\n";
+    script << "    print(f'   🔦 Use good lighting to avoid metal reflections')\n";
+    script << "    print(f'   📏 Scan from multiple angles around the tube')\n";
+    script << "    print(f'   🎯 Keep 0.5-2m distance from tube surface')\n";
+    script << "    print(f'   🔄 Move slowly for better feature tracking')\n\n";
     script << "if __name__ == '__main__': main()\n";
     
     script.close();
-    chmod((folder + "memory_safe_orb_converter.py").c_str(), 0755);
+    chmod((folder + "tube_mesh_generator.py").c_str(), 0755);
     
-    std::cout << "[MESH] ✅ Created MEMORY-SAFE MULTI-CORE ORB-SLAM3 converter!" << std::endl;
-    std::cout << "[MESH] 💾 Optimized for 16GB RAM systems" << std::endl;
-    std::cout << "[MESH] 🧠 Intelligent memory management with real-time monitoring" << std::endl;
-    std::cout << "[MESH] ⚡ Multi-core processing with adaptive worker count" << std::endl;
-    std::cout << "[MESH] 🚀 Run: cd 3D_Reconstruction_Data && python3 memory_safe_orb_converter.py" << std::endl;
+    std::cout << "[MESH] ✅ Created INTEGRATED TUBE MESH GENERATOR!" << std::endl;
+    std::cout << "[MESH] 🔧 Optimized for metal cuboid tubes" << std::endl;
+    std::cout << "[MESH] 🚀 Run: cd 3D_Reconstruction_Data && python3 tube_mesh_generator.py" << std::endl;
 }
 
 int main(int argc, char **argv) {
