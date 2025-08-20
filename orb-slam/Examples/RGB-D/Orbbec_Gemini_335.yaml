@@ -7,10 +7,10 @@
 Camera.type: "PinHole"
 
 # Camera calibration parameters (OLD format uses Camera.fx instead of Camera1.fx)
-Camera.fx: 345.2685
-Camera.fy: 345.536
-Camera.cx: 321.7610
-Camera.cy: 180.2327
+Camera.fx: 1035.805420
+Camera.fy: 1036.608398
+Camera.cx: 965.283142
+Camera.cy: 540.698120
 
 
 Camera.k1: 0.009173   
@@ -19,23 +19,23 @@ Camera.p1: -0.000152
 Camera.p2: -0.000378
 
 # Camera resolution - MUST MATCH YOUR CAMERA
-Camera.width: 640
-Camera.height: 360
+Camera.width: 1920
+Camera.height: 1080
 
 # Camera frames per second
-Camera.fps: 60
+Camera.fps: 30
 
 # Color order (0: BGR, 1: RGB)
 Camera.RGB: 1
 
 # # IMAGE SCALING
-# Camera.imageScale: 0.5
+Camera.imageScale: 0.33
 
 # RGBD specific parameters (OLD format)
 DepthMapFactor: 1000.0
 
 # RGB-D baseline parameter
-Camera.bf: 4.78
+Camera.bf: 14.51
 
 # Depth threshold
 ThDepth: 40.0
@@ -87,3 +87,4 @@ Viewer.ViewpointX: 0.0
 Viewer.ViewpointY: -0.7
 Viewer.ViewpointZ: -1.8
 Viewer.ViewpointF: 500.0
+Viewer.imageViewScale: 0.45
