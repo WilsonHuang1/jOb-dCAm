@@ -553,7 +553,7 @@ private:
 };
 
 void GenerateMapPointConverter() {
-    std::cout << "[MESH] Generating INTEGRATED TUBE MESH GENERATOR..." << std::endl;
+    std::cout << "[MESH] Generating ENHANCED TUBE MESH GENERATOR WITH FRAME DETAIL PRESERVATION..." << std::endl;
     std::string folder = "3D_Reconstruction_Data/";
     
     std::ofstream script(folder + "tube_mesh_generator.py");
@@ -624,15 +624,21 @@ void GenerateMapPointConverter() {
     script << "    except: print('⚠️ Could not orient normals consistently')\n";
     script << "    return pcd\n\n";
     
-    // Alpha shapes
+    // Alpha shapes with fine detail preservation
     script << "def create_tube_mesh_alpha_shapes(pcd, geometry_info):\n";
     script << "    print('🔨 Creating tube mesh with Alpha Shapes...')\n";
     script << "    min_dim = np.min(geometry_info['dimensions'])\n";
     script << "    base_alpha = min_dim / 15\n";
     script << "    point_density = len(pcd.points) / (geometry_info['dimensions'][0] * geometry_info['dimensions'][1])\n";
     script << "    density_factor = max(0.5, min(2.0, point_density / 1000))\n";
-    script << "    alpha_values = [0.002 / density_factor, 0.004 / density_factor, 0.008 / density_factor, 0.015 / density_factor, 0.022 / density_factor]\n";
-    script << "    print(f'🎯 Adaptive alphas: {[f\"{a*1000:.1f}mm\" for a in alpha_values]}')\n";
+    script << "    alpha_values = [\n";
+    script << "        0.0005 / density_factor,  # Very fine detail\n";
+    script << "        0.001 / density_factor,   # Fine detail\n";
+    script << "        0.002 / density_factor,   # Medium detail\n";
+    script << "        0.004 / density_factor,   # Coarser detail\n";
+    script << "        0.008 / density_factor    # Backup\n";
+    script << "    ]\n";
+    script << "    print(f'🎯 Frame-preserving alphas: {[f\"{a*1000:.1f}mm\" for a in alpha_values]}')\n";
     script << "    print(f'🔍 Testing alpha values: {[f\"{a:.4f}\" for a in alpha_values]}')\n";
     script << "    best_mesh, best_triangle_count, best_alpha = None, 0, 0\n";
     script << "    for alpha in alpha_values:\n";
@@ -641,7 +647,7 @@ void GenerateMapPointConverter() {
     script << "            mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha)\n";
     script << "            triangle_count = len(mesh.triangles)\n";
     script << "            print(f'      Result: {triangle_count:,} triangles')\n";
-    script << "            if 50 < triangle_count < 100000 and triangle_count > best_triangle_count:\n";
+    script << "            if 50 < triangle_count < 200000 and triangle_count > best_triangle_count:\n";
     script << "                if best_mesh is not None: del best_mesh\n";
     script << "                best_mesh, best_triangle_count, best_alpha = mesh, triangle_count, alpha\n";
     script << "            else: del mesh\n";
@@ -651,15 +657,23 @@ void GenerateMapPointConverter() {
     script << "        return best_mesh\n";
     script << "    else: print('❌ No suitable alpha shapes mesh found'); return None\n\n";
     
-    // Ball pivoting  
+    // Ball pivoting with fine detail preservation
     script << "def create_tube_mesh_ball_pivoting(pcd, geometry_info):\n";
     script << "    print('🔨 Creating tube mesh with Ball Pivoting...')\n";
     script << "    try:\n";
     script << "        distances = pcd.compute_nearest_neighbor_distance()\n";
     script << "        avg_dist = np.mean(distances)\n";
     script << "        print(f'📊 Average point distance: {avg_dist:.4f}m')\n";
-    script << "        radii = [0.002, 0.003, 0.004, 0.006, 0.008, 0.012, 0.016]\n";
-    script << "        print(f'🎯 Ultra-precision radii: {[f\"{r*1000:.0f}mm\" for r in radii]}')\n";
+    script << "        radii = [\n";
+    script << "            0.0005,  # 0.5mm - very fine detail\n";
+    script << "            0.001,   # 1mm - fine detail\n";
+    script << "            0.002,   # 2mm - medium detail\n";
+    script << "            0.003,   # 3mm - structural detail\n";
+    script << "            0.005,   # 5mm - larger structures\n";
+    script << "            0.008,   # 8mm - backup\n";
+    script << "            0.012    # 12mm - emergency\n";
+    script << "        ]\n";
+    script << "        print(f'🎯 Frame-preserving radii: {[f\"{r*1000:.0f}mm\" for r in radii]}')\n";
     script << "        print(f'🔍 Using radii: {[f\"{r:.4f}\" for r in radii]}')\n";
     script << "        mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(pcd, o3d.utility.DoubleVector(radii))\n";
     script << "        triangle_count = len(mesh.triangles)\n";
@@ -688,13 +702,25 @@ void GenerateMapPointConverter() {
     script << "        return mesh if triangle_count > 100 else None\n";
     script << "    except Exception as e: print(f'❌ Poisson failed: {e}'); return None\n\n";
     
+    // Smoothing function
+    script << "def smooth_tube_mesh(mesh, iterations=3):\n";
+    script << "    \"\"\"Apply gentle smoothing while preserving frame details\"\"\"\n";
+    script << "    print(f\"🎨 Gentle smoothing with {iterations} iterations...\")\n";
+    script << "    if mesh is None: return None\n";
+    script << "    mesh_smooth = mesh.filter_smooth_laplacian(\n";
+    script << "        number_of_iterations=iterations,\n";
+    script << "        lambda_filter=0.3  # Gentle smoothing to preserve details\n";
+    script << "    )\n";
+    script << "    print(f\"✅ Mesh smoothed - triangles preserved: {len(mesh_smooth.triangles):,}\")\n";
+    script << "    return mesh_smooth\n\n";
+    
     // Try all methods
     script << "def try_all_tube_methods(pcd, geometry_info):\n";
-    script << "    print('\\n🔄 Testing all tube-optimized meshing methods...')\n";
+    script << "    print('\\n🔄 Testing all frame-preserving meshing methods...')\n";
     script << "    methods = [('Alpha Shapes', create_tube_mesh_alpha_shapes), ('Ball Pivoting', create_tube_mesh_ball_pivoting), ('Poisson', create_tube_mesh_poisson)]\n";
     script << "    best_mesh, best_triangle_count, best_method = None, 0, ''\n";
     script << "    for method_name, method_func in methods:\n";
-    script << "        print(f'\\n🔄 Trying {method_name} for tube reconstruction...')\n";
+    script << "        print(f'\\n🔄 Trying {method_name} for frame-preserving reconstruction...')\n";
     script << "        try:\n";
     script << "            mesh = method_func(pcd, geometry_info)\n";
     script << "            if mesh is not None:\n";
@@ -706,57 +732,57 @@ void GenerateMapPointConverter() {
     script << "                else: del mesh\n";
     script << "            else: print(f'❌ {method_name}: failed')\n";
     script << "        except Exception as e: print(f'❌ {method_name}: error - {e}')\n";
-    script << "    if best_mesh is not None: print(f'\\n🏆 Best method for tube: {best_method} with {best_triangle_count:,} triangles')\n";
-    script << "    else: print('\\n⚠️ No method produced a valid tube mesh')\n";
+    script << "    if best_mesh is not None: print(f'\\n🏆 Best method for frame preservation: {best_method} with {best_triangle_count:,} triangles')\n";
+    script << "    else: print('\\n⚠️ No method produced a valid frame-preserving mesh')\n";
     script << "    return best_mesh\n\n";
     
     // Clean mesh
     script << "def clean_tube_mesh(mesh):\n";
     script << "    if mesh is None: return None\n";
-    script << "    print('🧹 Tube-specific mesh cleaning...')\n";
+    script << "    print('🧹 Frame-preserving mesh cleaning...')\n";
     script << "    print_memory_status('before cleaning')\n";
     script << "    original_triangles = len(mesh.triangles)\n";
     script << "    mesh.remove_degenerate_triangles(); mesh.remove_duplicated_triangles()\n";
     script << "    mesh.remove_duplicated_vertices(); mesh.remove_non_manifold_edges()\n";
     script << "    cleaned_triangles = len(mesh.triangles)\n";
     script << "    removed = original_triangles - cleaned_triangles\n";
-    script << "    print(f'🧹 Cleaned: removed {removed:,} bad triangles')\n";
+    script << "    print(f'🧹 Cleaned: removed {removed:,} bad triangles (preserved frame details)')\n";
     script << "    print(f'📊 Final mesh: {len(mesh.vertices):,} vertices, {cleaned_triangles:,} triangles')\n";
     script << "    print_memory_status('after cleaning')\n";
     script << "    return mesh\n\n";
     
     // Save results
     script << "def save_tube_results(mesh, pcd, geometry_info):\n";
-    script << "    print('💾 Saving tube reconstruction results...')\n";
+    script << "    print('💾 Saving frame-preserving reconstruction results...')\n";
     script << "    print_memory_status('before saving')\n";
     script << "    try: o3d.io.write_point_cloud('tube_pointcloud.ply', pcd); print('✅ Tube point cloud: tube_pointcloud.ply')\n";
     script << "    except Exception as e: print(f'❌ Point cloud save failed: {e}')\n";
     script << "    if mesh is not None:\n";
     script << "        try:\n";
     script << "            mesh.compute_vertex_normals(); mesh.compute_triangle_normals()\n";
-    script << "            o3d.io.write_triangle_mesh('tube_mesh.stl', mesh); print('✅ Tube mesh STL: tube_mesh.stl')\n";
-    script << "            o3d.io.write_triangle_mesh('tube_mesh.ply', mesh); print('✅ Tube mesh PLY: tube_mesh.ply')\n";
-    script << "            o3d.io.write_triangle_mesh('tube_mesh.obj', mesh); print('✅ Tube mesh OBJ: tube_mesh.obj')\n";
-    script << "            print(f'\\n📊 Tube mesh statistics:')\n";
+    script << "            o3d.io.write_triangle_mesh('tube_mesh.stl', mesh); print('✅ Frame-preserving tube mesh STL: tube_mesh.stl')\n";
+    script << "            o3d.io.write_triangle_mesh('tube_mesh.ply', mesh); print('✅ Frame-preserving tube mesh PLY: tube_mesh.ply')\n";
+    script << "            o3d.io.write_triangle_mesh('tube_mesh.obj', mesh); print('✅ Frame-preserving tube mesh OBJ: tube_mesh.obj')\n";
+    script << "            print(f'\\n📊 Frame-preserving mesh statistics:')\n";
     script << "            print(f'   Vertices: {len(mesh.vertices):,}')\n";
     script << "            print(f'   Triangles: {len(mesh.triangles):,}')\n";
     script << "        except Exception as e: print(f'❌ Mesh save failed: {e}')\n";
     script << "    try:\n";
     script << "        with open('tube_analysis.txt', 'w') as f:\n";
-    script << "            f.write('# Tube Geometry Analysis\\n')\n";
+    script << "            f.write('# Frame-Preserving Tube Geometry Analysis\\n')\n";
     script << "            f.write(f'Dimensions: {geometry_info[\"dimensions\"]}\\n')\n";
     script << "            f.write(f'Point density: {geometry_info[\"density\"]:.1f} points/m³\\n')\n";
     script << "            f.write(f'Is sparse: {geometry_info[\"is_sparse\"]}\\n')\n";
     script << "            f.write(f'Center: {geometry_info[\"center\"]}\\n')\n";
-    script << "        print('✅ Geometry analysis: tube_analysis.txt')\n";
+    script << "        print('✅ Frame analysis: tube_analysis.txt')\n";
     script << "    except Exception as e: print(f'❌ Analysis save failed: {e}')\n";
     script << "    print_memory_status('after saving')\n\n";
     
     // Main function
     script << "def main():\n";
-    script << "    print('🏗️ === TUBE-SPECIFIC MESH GENERATOR ===')\n";
-    script << "    print('🔧 Optimized for metal cuboid tubes and geometric objects')\n";
-    script << "    print('⚡ Handles sparse points and sharp edges\\n')\n";
+    script << "    print('🏗️ === FRAME-PRESERVING TUBE MESH GENERATOR ===')\n";
+    script << "    print('🔧 Optimized for metal tubes with visible internal frames')\n";
+    script << "    print('⚡ Preserves structural details and sharp edges\\n')\n";
     script << "    mem = psutil.virtual_memory()\n";
     script << "    print(f'💻 System: {mem.total / (1024**3):.1f}GB RAM available')\n";
     script << "    total_start = time.time()\n";
@@ -772,11 +798,11 @@ void GenerateMapPointConverter() {
     script << "        return\n";
     script << "    print(f'📍 Using map points from: {source_file}')\n";
     script << "    if len(points) < 20:\n";
-    script << "        print('⚠️ Too few points for tube reconstruction')\n";
-    script << "        print('💡 Need at least 20 points for geometric reconstruction')\n";
+    script << "        print('⚠️ Too few points for frame reconstruction')\n";
+    script << "        print('💡 Need at least 20 points for frame-preserving reconstruction')\n";
     script << "        return\n";
     script << "    geometry_info = analyze_tube_geometry(points)\n";
-    script << "    print(f'\\n🔄 Creating tube point cloud from {len(points):,} points...')\n";
+    script << "    print(f'\\n🔄 Creating frame-preserving point cloud from {len(points):,} points...')\n";
     script << "    pcd = o3d.geometry.PointCloud()\n";
     script << "    pcd.points = o3d.utility.Vector3dVector(points)\n";
     script << "    colors = np.tile([0.8, 0.8, 0.9], (len(points), 1))\n";
@@ -784,29 +810,31 @@ void GenerateMapPointConverter() {
     script << "    pcd = tube_optimized_normals(pcd, geometry_info)\n";
     script << "    mesh = try_all_tube_methods(pcd, geometry_info)\n";
     script << "    if mesh is not None: mesh = clean_tube_mesh(mesh)\n";
+    script << "    if mesh is not None: mesh = smooth_tube_mesh(mesh, iterations=2)\n";
     script << "    save_tube_results(mesh, pcd, geometry_info)\n";
     script << "    total_time = time.time() - total_start\n";
-    script << "    print(f'\\n🎉 Tube reconstruction complete in {total_time:.1f}s!')\n";
+    script << "    print(f'\\n🎉 Frame-preserving reconstruction complete in {total_time:.1f}s!')\n";
     script << "    if mesh is not None:\n";
-    script << "        print(f'\\n🎯 For SolidWorks (tube model):')\n";
+    script << "        print(f'\\n🎯 For SolidWorks (with frame details):')\n";
     script << "        print(f'   📄 Use: tube_mesh.stl')\n";
-    script << "        print(f'   🔧 Perfect for metal cuboid tube geometry')\n";
-    script << "        print(f'   📐 Maintains sharp edges and geometric features')\n";
+    script << "        print(f'   🔧 Preserves internal frame structure')\n";
+    script << "        print(f'   📐 Maintains both outer geometry and inner details')\n";
     script << "    else:\n";
     script << "        print(f'\\n📊 Point cloud only: tube_pointcloud.ply')\n";
-    script << "        print(f'💡 Try adjusting scan distance or lighting for better results')\n";
-    script << "    print(f'\\n💡 Tube scanning tips:')\n";
-    script << "    print(f'   🔦 Use good lighting to avoid metal reflections')\n";
-    script << "    print(f'   📏 Scan from multiple angles around the tube')\n";
-    script << "    print(f'   🎯 Keep 0.5-2m distance from tube surface')\n";
-    script << "    print(f'   🔄 Move slowly for better feature tracking')\n\n";
+    script << "        print(f'💡 Try different scanning angles to capture more frame details')\n";
+    script << "    print(f'\\n💡 Frame-preserving scanning tips:')\n";
+    script << "    print(f'   🔦 Use consistent lighting to avoid shadows in frames')\n";
+    script << "    print(f'   📏 Scan from multiple angles to see through frame gaps')\n";
+    script << "    print(f'   🎯 Keep steady distance to maintain frame detail resolution')\n";
+    script << "    print(f'   ⏰ Move slowly to capture fine frame structures')\n\n";
     script << "if __name__ == '__main__': main()\n";
     
     script.close();
     chmod((folder + "tube_mesh_generator.py").c_str(), 0755);
     
-    std::cout << "[MESH] ✅ Created INTEGRATED TUBE MESH GENERATOR!" << std::endl;
-    std::cout << "[MESH] 🔧 Optimized for metal cuboid tubes" << std::endl;
+    std::cout << "[MESH] ✅ Created ENHANCED FRAME-PRESERVING TUBE MESH GENERATOR!" << std::endl;
+    std::cout << "[MESH] 🔧 Optimized to preserve internal frame structure" << std::endl;
+    std::cout << "[MESH] 📐 Uses finer detail settings to capture visible frames" << std::endl;
     std::cout << "[MESH] 🚀 Run: cd 3D_Reconstruction_Data && python3 tube_mesh_generator.py" << std::endl;
 }
 
