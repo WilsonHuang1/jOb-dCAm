@@ -1188,7 +1188,7 @@ int main(int argc, char **argv) {
     std::cout << "SUCCESS: Camera trajectory: KeyFrameTrajectory_final_run.txt" << std::endl;
     std::cout << "SUCCESS: Camera parameters: camera_params.txt" << std::endl;
     std::cout << "SUCCESS: Map point converter: tube_mesh_generator.py" << std::endl;
-    std::cout << "READY: Clean 3D reconstruction from SLAM map points!" << std::endl;
+    // std::cout << "READY: Clean 3D reconstruction from SLAM map points!" << std::endl;
 
     return 0;
 }
