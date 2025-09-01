@@ -436,4 +436,54 @@ if(OrbbecSDK_FOUND)
     
     target_include_directories(rgbd_inertial_orbbec_gemini335 PRIVATE ${OrbbecSDK_INCLUDE_DIR})
     target_link_libraries(rgbd_inertial_orbbec_gemini335 ${PROJECT_NAME} ${OrbbecSDK_LIBRARY})
+
+    # RGB-D Orbbec USB2.0 examples
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/RGB-D)
+    
+    add_executable(rgbd_orbbec_gemini335_usb2
+            Examples/RGB-D/rgbd_orbbec_gemini335_usb2.0.cc)
+    
+    target_include_directories(rgbd_orbbec_gemini335_usb2 PRIVATE ${OrbbecSDK_INCLUDE_DIR})
+    target_link_libraries(rgbd_orbbec_gemini335_usb2 ${PROJECT_NAME} ${OrbbecSDK_LIBRARY})
+
+    # check stream types
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/RGB-D-Inertial)
+    
+    add_executable(orbbec_stream_detector
+            Examples/RGB-D-Inertial/orbbec_stream_detector.cc)
+    
+    target_include_directories(orbbec_stream_detector PRIVATE ${OrbbecSDK_INCLUDE_DIR})
+    target_link_libraries(orbbec_stream_detector ${OrbbecSDK_LIBRARY})
+
+    # check stream types
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/RGB-D-Inertial)
+    
+    add_executable(imu_data_checker
+            Examples/RGB-D-Inertial/imu_data_checker.cc)
+    
+    target_include_directories(imu_data_checker PRIVATE ${OrbbecSDK_INCLUDE_DIR})
+    target_link_libraries(imu_data_checker ${OrbbecSDK_LIBRARY})
+
+endif()
+
+# Stereo Orbbec examples
+if(OrbbecSDK_FOUND)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Stereo)
+    
+    add_executable(stereo_orbbec_gemini335
+            Examples/Stereo/stereo_orbbec_gemini335.cc)
+    
+    target_include_directories(stereo_orbbec_gemini335 PRIVATE ${OrbbecSDK_INCLUDE_DIR})
+    target_link_libraries(stereo_orbbec_gemini335 ${PROJECT_NAME} ${OrbbecSDK_LIBRARY})
+    
+    # Stereo-Inertial Orbbec examples
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Stereo-Inertial)
+    
+    add_executable(stereo_inertial_orbbec_gemini335
+            Examples/Stereo-Inertial/stereo_inertial_orbbec_gemini335.cc)
+    
+    target_include_directories(stereo_inertial_orbbec_gemini335 PRIVATE ${OrbbecSDK_INCLUDE_DIR})
+    target_link_libraries(stereo_inertial_orbbec_gemini335 ${PROJECT_NAME} ${OrbbecSDK_LIBRARY})
+    
+    message(STATUS "Orbbec Stereo and Stereo-Inertial examples will be built")
 endif()
