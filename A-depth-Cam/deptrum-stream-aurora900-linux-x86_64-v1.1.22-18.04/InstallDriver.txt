@@ -1,0 +1,28 @@
+└─SDK安装包
+    ├─InstallDriver.txt             ======>  驱动安装说明
+    ├─RELEASE-*.md                  ======>  SDK ReleaseNotes
+    ├─bin                           ======>  Windows平台*.dll
+    ├─docs                          ======>  用户文档
+    ├─driver                        ======>  Windows平台驱动
+    ├─scripts                       ======>  Linux平台驱动安装脚本
+    ├─include                       ======>  头文件
+    ├─lib                           ======>  库文件
+    └─samples                       ======>  样例程序
+        ├─bin                       ======>  样例程序可执行文件
+        ├─src                       ======>  样例程序源文件
+        ├─CMakeLists.txt            ======>  样例程序构建脚本
+        └─README.md                 ======>  构建步骤说明
+       
+安装驱动程序：     
+Windows平台：
+1. 切换到driver目录。
+2. 双击InstallDriver.exe进行安装。
+
+Linux平台：
+设置设备udev权限后，使用SDK无需使用root权限。
+1. cd script
+2. sudo sh ./setup_udev_rules.sh
+
+安装SDK和samples依赖的三方库：
+1. cd script
+2. sudo sh ./install_dependency.sh
