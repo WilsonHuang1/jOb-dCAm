@@ -10,7 +10,6 @@
 #include <vector>
 #include <thread>
 #include <iomanip>
-#include <set>
 
 #include <opencv2/opencv.hpp>
 #include <Eigen/Dense>
@@ -227,12 +226,12 @@ public:
             
             // Try to configure COLOR stream
             try {
-                std::cout << "[DEBUG] Trying COLOR: 848x480@60fps" << std::endl;
-                config_->enableVideoStream(OB_STREAM_COLOR, 848, 480, 60, OB_FORMAT_RGB);
+                std::cout << "[DEBUG] Trying COLOR: 424x240@60fps" << std::endl;
+                config_->enableVideoStream(OB_STREAM_COLOR, 424, 240, 60, OB_FORMAT_RGB);
                 color_configured = true;
-                std::cout << "[DEBUG] COLOR configured: 848x480@60fps ✓" << std::endl;
+                std::cout << "[DEBUG] COLOR configured: 424x240@60fps ✓" << std::endl;
             } catch (const ob::Error& e) {
-                std::cout << "[WARNING] COLOR 848x480@60fps failed: " << e.what() << std::endl;
+                std::cout << "[WARNING] COLOR 424x240@60fps failed: " << e.what() << std::endl;
                 
                 try {
                     std::cout << "[DEBUG] Trying COLOR: 480x270@60fps" << std::endl;
@@ -255,12 +254,12 @@ public:
             
             // Try to configure DEPTH stream
             try {
-                std::cout << "[DEBUG] Trying DEPTH: 848x480@60fps" << std::endl;
-                config_->enableVideoStream(OB_STREAM_DEPTH, 848, 480, 60, OB_FORMAT_Y16);
+                std::cout << "[DEBUG] Trying DEPTH: 480x270@60fps" << std::endl;
+                config_->enableVideoStream(OB_STREAM_DEPTH, 480, 270, 60, OB_FORMAT_Y16);
                 depth_configured = true;
-                std::cout << "[DEBUG] DEPTH configured: 848x480@60fps ✓" << std::endl;
+                std::cout << "[DEBUG] DEPTH configured: 480x270@60fps ✓" << std::endl;
             } catch (const ob::Error& e) {
-                std::cout << "[WARNING] DEPTH 848x480@60fps failed: " << e.what() << std::endl;
+                std::cout << "[WARNING] DEPTH 480x270@60fps failed: " << e.what() << std::endl;
                 
                 try {
                     std::cout << "[DEBUG] Trying DEPTH: 640x360@30fps" << std::endl;
@@ -316,7 +315,7 @@ public:
                 
                 for (uint32_t i = 0; i < colorProfiles->getCount(); i++) {
                     auto profile = colorProfiles->getProfile(i)->as<ob::VideoStreamProfile>();
-                    if (profile->getWidth() == 848 && profile->getHeight() == 480) {
+                    if (profile->getWidth() == 424 && profile->getHeight() == 240) {
                         colorProfile = profile;
                         std::cout << "[DEBUG] Found matching color profile: " << profile->getWidth() 
                                 << "x" << profile->getHeight() << "@" << profile->getFps() << "fps" << std::endl;
@@ -504,7 +503,7 @@ public:
             }
             
             // Force resize to target resolution if needed  
-            cv::Size target_size(848, 480);  // Target 1080p
+            cv::Size target_size(424, 240);  // Target 1080p
             if (color.size() != target_size) {
                 if (debug_this_frame) {
                     std::cout << "[DEBUG] Resizing color " << color.size() << " -> " << target_size << std::endl;
@@ -705,92 +704,52 @@ void GenerateMapPointConverter() {
     script << "    except Exception as e: print(f'❌ Poisson failed: {e}'); return None\n\n";
     
     // Smoothing function
-    script << "def smooth_tube_mesh(mesh, iterations=1):\n";
-    script << "    \\\"\\\"\\\"Apply very gentle smoothing\\\"\\\"\\\"\n";
-    script << "    print(f\\\"🎨 Gentle smoothing with {iterations} iterations...\\\")\n";
+    script << "def smooth_tube_mesh(mesh, iterations=3):\n";
+    script << "    \"\"\"Apply gentle smoothing while preserving frame details\"\"\"\n";
+    script << "    print(f\"🎨 Gentle smoothing with {iterations} iterations...\")\n";
     script << "    if mesh is None: return None\n";
-    script << "    \n";
-    script << "    # Try Taubin smoothing which preserves volume better\n";
-    script << "    mesh_smooth = mesh.filter_smooth_taubin(\n";
+    script << "    mesh_smooth = mesh.filter_smooth_laplacian(\n";
     script << "        number_of_iterations=iterations,\n";
-    script << "        lambda_filter=0.3,\n";
-    script << "        mu=-0.31  # Fixed parameter name from mu_filter to mu\n";
+    script << "        lambda_filter=0.3  # Gentle smoothing to preserve details\n";
     script << "    )\n";
-    script << "    print(f\\\"✅ Mesh smoothed with Taubin filter: {len(mesh_smooth.triangles):,}\\\")\n";
+    script << "    print(f\"✅ Mesh smoothed - triangles preserved: {len(mesh_smooth.triangles):,}\")\n";
     script << "    return mesh_smooth\n\n";
     
     // Try all methods
     script << "def try_all_tube_methods(pcd, geometry_info):\n";
-    script << "    print('\\\\n🔄 Testing refined tube meshing...')\n";
-    script << "    \n";
-    script << "    dimensions = geometry_info['dimensions']\n";
-    script << "    avg_dim = np.mean(dimensions)\n";
-    script << "    point_count = len(pcd.points)\n";
-    script << "    \n";
-    script << "    # More detailed alpha progression since general shape is working\n";
-    script << "    alpha_values = [\n";
-    script << "        avg_dim / 15,   # Start where it was working\n";
-    script << "        avg_dim / 25,   # More detailed\n";
-    script << "        avg_dim / 40,   # Even more detailed\n";
-    script << "        avg_dim / 60,   # Fine detail\n";
-    script << "        avg_dim / 80,   # Very fine detail\n";
-    script << "        avg_dim / 120,  # Maximum detail\n";
-    script << "    ]\n";
-    script << "    \n";
-    script << "    print(f'🎯 Refined alphas: {[f\\\"{a:.3f}m\\\" for a in alpha_values]}')\n";
-    script << "    \n";
-    script << "    best_mesh = None\n";
-    script << "    best_score = 0\n";
-    script << "    \n";
-    script << "    for i, alpha in enumerate(alpha_values):\n";
+    script << "    print('\\n🔄 Testing all frame-preserving meshing methods...')\n";
+    script << "    methods = [('Alpha Shapes', create_tube_mesh_alpha_shapes), ('Ball Pivoting', create_tube_mesh_ball_pivoting), ('Poisson', create_tube_mesh_poisson)]\n";
+    script << "    best_mesh, best_triangle_count, best_method = None, 0, ''\n";
+    script << "    for method_name, method_func in methods:\n";
+    script << "        print(f'\\n🔄 Trying {method_name} for frame-preserving reconstruction...')\n";
     script << "        try:\n";
-    script << "            print(f'   Level {i+1}: α = {alpha:.3f}m...')\n";
-    script << "            mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha)\n";
-    script << "            triangle_count = len(mesh.triangles)\n";
-    script << "            \n";
-    script << "            # Adjust scoring to favor more detail now that basic shape works\n";
-    script << "            if 50 < triangle_count < 100000:  # Allow more triangles\n";
-    script << "                # Favor higher detail levels more aggressively\n";
-    script << "                detail_bonus = 1.0 + (i * 0.2)  # Bigger bonus for detail\n";
-    script << "                score = triangle_count * detail_bonus\n";
-    script << "                \n";
-    script << "                print(f'      Result: {triangle_count:,} triangles, score: {score:.0f}')\n";
-    script << "                \n";
-    script << "                if score > best_score:\n";
-    script << "                    if best_mesh is not None:\n";
-    script << "                        del best_mesh\n";
-    script << "                    best_mesh = mesh\n";
-    script << "                    best_score = score\n";
-    script << "                else:\n";
-    script << "                    del mesh\n";
-    script << "            else:\n";
-    script << "                print(f'      Result: {triangle_count:,} triangles (outside range)')\n";
-    script << "                del mesh\n";
-    script << "                \n";
-    script << "        except Exception as e:\n";
-    script << "            print(f'      Failed: {e}')\n";
-    script << "    \n";
-    script << "    if best_mesh is not None:\n";
-    script << "        print(f'✅ Refined result: {len(best_mesh.triangles):,} triangles')\n";
-    script << "        return best_mesh\n";
-    script << "    \n";
-    script << "    return None\n\n";
+    script << "            mesh = method_func(pcd, geometry_info)\n";
+    script << "            if mesh is not None:\n";
+    script << "                triangle_count = len(mesh.triangles)\n";
+    script << "                print(f'✅ {method_name}: {triangle_count:,} triangles')\n";
+    script << "                if triangle_count > best_triangle_count:\n";
+    script << "                    if best_mesh is not None: del best_mesh\n";
+    script << "                    best_mesh, best_triangle_count, best_method = mesh, triangle_count, method_name\n";
+    script << "                else: del mesh\n";
+    script << "            else: print(f'❌ {method_name}: failed')\n";
+    script << "        except Exception as e: print(f'❌ {method_name}: error - {e}')\n";
+    script << "    if best_mesh is not None: print(f'\\n🏆 Best method for frame preservation: {best_method} with {best_triangle_count:,} triangles')\n";
+    script << "    else: print('\\n⚠️ No method produced a valid frame-preserving mesh')\n";
+    script << "    return best_mesh\n\n";
     
     // Clean mesh
     script << "def clean_tube_mesh(mesh):\n";
     script << "    if mesh is None: return None\n";
-    script << "    print('🧹 Minimal cleaning to preserve detail...')\n";
+    script << "    print('🧹 Frame-preserving mesh cleaning...')\n";
+    script << "    print_memory_status('before cleaning')\n";
     script << "    original_triangles = len(mesh.triangles)\n";
-    script << "    \n";
-    script << "    # Only remove the most obvious bad triangles\n";
-    script << "    mesh.remove_degenerate_triangles()\n";
-    script << "    # Skip other cleaning that might remove detail\n";
-    script << "    \n";
+    script << "    mesh.remove_degenerate_triangles(); mesh.remove_duplicated_triangles()\n";
+    script << "    mesh.remove_duplicated_vertices(); mesh.remove_non_manifold_edges()\n";
     script << "    cleaned_triangles = len(mesh.triangles)\n";
     script << "    removed = original_triangles - cleaned_triangles\n";
-    script << "    print(f'🧹 Minimal clean: removed {removed:,} degenerate triangles only')\n";
-    script << "    print(f'📊 Preserved mesh: {len(mesh.vertices):,} vertices, {cleaned_triangles:,} triangles')\n";
-    script << "    \n";
+    script << "    print(f'🧹 Cleaned: removed {removed:,} bad triangles (preserved frame details)')\n";
+    script << "    print(f'📊 Final mesh: {len(mesh.vertices):,} vertices, {cleaned_triangles:,} triangles')\n";
+    script << "    print_memory_status('after cleaning')\n";
     script << "    return mesh\n\n";
     
     // Save results
@@ -805,17 +764,17 @@ void GenerateMapPointConverter() {
     script << "            o3d.io.write_triangle_mesh('tube_mesh.stl', mesh); print('✅ Frame-preserving tube mesh STL: tube_mesh.stl')\n";
     script << "            o3d.io.write_triangle_mesh('tube_mesh.ply', mesh); print('✅ Frame-preserving tube mesh PLY: tube_mesh.ply')\n";
     script << "            o3d.io.write_triangle_mesh('tube_mesh.obj', mesh); print('✅ Frame-preserving tube mesh OBJ: tube_mesh.obj')\n";
-    script << "            print(f'\\\\n📊 Frame-preserving mesh statistics:')\n";
+    script << "            print(f'\\n📊 Frame-preserving mesh statistics:')\n";
     script << "            print(f'   Vertices: {len(mesh.vertices):,}')\n";
     script << "            print(f'   Triangles: {len(mesh.triangles):,}')\n";
     script << "        except Exception as e: print(f'❌ Mesh save failed: {e}')\n";
     script << "    try:\n";
     script << "        with open('tube_analysis.txt', 'w') as f:\n";
-    script << "            f.write('# Frame-Preserving Tube Geometry Analysis\\\\n')\n";
-    script << "            f.write(f'Dimensions: {geometry_info[\\\"dimensions\\\"]}\\\\n')\n";
-    script << "            f.write(f'Point density: {geometry_info[\\\"density\\\"]:.1f} points/m³\\\\n')\n";
-    script << "            f.write(f'Is sparse: {geometry_info[\\\"is_sparse\\\"]}\\\\n')\n";
-    script << "            f.write(f'Center: {geometry_info[\\\"center\\\"]}\\\\n')\n";
+    script << "            f.write('# Frame-Preserving Tube Geometry Analysis\\n')\n";
+    script << "            f.write(f'Dimensions: {geometry_info[\"dimensions\"]}\\n')\n";
+    script << "            f.write(f'Point density: {geometry_info[\"density\"]:.1f} points/m³\\n')\n";
+    script << "            f.write(f'Is sparse: {geometry_info[\"is_sparse\"]}\\n')\n";
+    script << "            f.write(f'Center: {geometry_info[\"center\"]}\\n')\n";
     script << "        print('✅ Frame analysis: tube_analysis.txt')\n";
     script << "    except Exception as e: print(f'❌ Analysis save failed: {e}')\n";
     script << "    print_memory_status('after saving')\n\n";
@@ -824,11 +783,11 @@ void GenerateMapPointConverter() {
     script << "def main():\n";
     script << "    print('🏗️ === FRAME-PRESERVING TUBE MESH GENERATOR ===')\n";
     script << "    print('🔧 Optimized for metal tubes with visible internal frames')\n";
-    script << "    print('⚡ Preserves structural details and sharp edges\\\\n')\n";
+    script << "    print('⚡ Preserves structural details and sharp edges\\n')\n";
     script << "    mem = psutil.virtual_memory()\n";
     script << "    print(f'💻 System: {mem.total / (1024**3):.1f}GB RAM available')\n";
     script << "    total_start = time.time()\n";
-    script << "    map_files = ['ref_map_points.txt', 'map_points_COMBINED.txt']\n";
+    script << "    map_files = ['ref_map_points.txt', 'map_points.txt']\n";
     script << "    points, source_file = None, ''\n";
     script << "    for filename in map_files:\n";
     script << "        if os.path.exists(filename):\n";
@@ -836,7 +795,7 @@ void GenerateMapPointConverter() {
     script << "            if points is not None: source_file = filename; break\n";
     script << "    if points is None:\n";
     script << "        print('❌ No valid ORB-SLAM3 map point files found!')\n";
-    script << "        print('💡 Make sure you have \\\"map_points.txt\\\" or \\\"ref_map_points.txt\\\"')\n";
+    script << "        print('💡 Make sure you have \"map_points.txt\" or \"ref_map_points.txt\"')\n";
     script << "        return\n";
     script << "    print(f'📍 Using map points from: {source_file}')\n";
     script << "    if len(points) < 20:\n";
@@ -844,7 +803,7 @@ void GenerateMapPointConverter() {
     script << "        print('💡 Need at least 20 points for frame-preserving reconstruction')\n";
     script << "        return\n";
     script << "    geometry_info = analyze_tube_geometry(points)\n";
-    script << "    print(f'\\\\n🔄 Creating frame-preserving point cloud from {len(points):,} points...')\n";
+    script << "    print(f'\\n🔄 Creating frame-preserving point cloud from {len(points):,} points...')\n";
     script << "    pcd = o3d.geometry.PointCloud()\n";
     script << "    pcd.points = o3d.utility.Vector3dVector(points)\n";
     script << "    colors = np.tile([0.8, 0.8, 0.9], (len(points), 1))\n";
@@ -855,16 +814,16 @@ void GenerateMapPointConverter() {
     script << "    if mesh is not None: mesh = smooth_tube_mesh(mesh, iterations=2)\n";
     script << "    save_tube_results(mesh, pcd, geometry_info)\n";
     script << "    total_time = time.time() - total_start\n";
-    script << "    print(f'\\\\n🎉 Frame-preserving reconstruction complete in {total_time:.1f}s!')\n";
+    script << "    print(f'\\n🎉 Frame-preserving reconstruction complete in {total_time:.1f}s!')\n";
     script << "    if mesh is not None:\n";
-    script << "        print(f'\\\\n🎯 For SolidWorks (with frame details):')\n";
+    script << "        print(f'\\n🎯 For SolidWorks (with frame details):')\n";
     script << "        print(f'   📄 Use: tube_mesh.stl')\n";
     script << "        print(f'   🔧 Preserves internal frame structure')\n";
     script << "        print(f'   📐 Maintains both outer geometry and inner details')\n";
     script << "    else:\n";
-    script << "        print(f'\\\\n📊 Point cloud only: tube_pointcloud.ply')\n";
+    script << "        print(f'\\n📊 Point cloud only: tube_pointcloud.ply')\n";
     script << "        print(f'💡 Try different scanning angles to capture more frame details')\n";
-    script << "    print(f'\\\\n💡 Frame-preserving scanning tips:')\n";
+    script << "    print(f'\\n💡 Frame-preserving scanning tips:')\n";
     script << "    print(f'   🔦 Use consistent lighting to avoid shadows in frames')\n";
     script << "    print(f'   📏 Scan from multiple angles to see through frame gaps')\n";
     script << "    print(f'   🎯 Keep steady distance to maintain frame detail resolution')\n";
@@ -879,7 +838,6 @@ void GenerateMapPointConverter() {
     std::cout << "[MESH] 📐 Uses finer detail settings to capture visible frames" << std::endl;
     std::cout << "[MESH] 🚀 Run: cd 3D_Reconstruction_Data && python3 tube_mesh_generator.py" << std::endl;
 }
-
 
 int main(int argc, char **argv) {
     std::cout << "\n[DEBUG] =============== ORB-SLAM3 RGB-D WITH MAP EXPORT ===============" << std::endl;
@@ -924,13 +882,6 @@ int main(int argc, char **argv) {
     // Create reconstruction folder - DECLARE FOLDER VARIABLES EARLY
     std::string reconstruction_folder = "3D_Reconstruction_Data";
     std::string folder = "3D_Reconstruction_Data/";
-
-    // // Variables to track best intermediate map
-    // static int best_frame_number = 0;
-    // static int max_points_seen = 0;
-
-    // Variables to accumulate all good maps
-    std::set<std::string> good_map_points;
     
     if (mkdir(reconstruction_folder.c_str(), 0777) == 0) {
         std::cout << "[DEBUG] Created folder: " << reconstruction_folder << std::endl;
@@ -1032,50 +983,11 @@ int main(int argc, char **argv) {
             cout << " | Success: " << (100.0 * tracking_ok_count / frame_count) << "%" << endl;
         }
         
-        // Variables to accumulate all good maps
+        // Save intermediate maps every 100 frames when tracking OK
         if (frame_count % 100 == 0 && state == 2) {
             std::string temp_file = folder + "map_points_frame_" + std::to_string(frame_count) + ".txt";
             SLAM.SavePointCloud(temp_file);
-            
-            // Debug: check if file exists and has content
-            std::ifstream file(temp_file);
-            if (!file.is_open()) {
-                std::cout << "[DEBUG] ERROR: Could not open " << temp_file << std::endl;
-                return 1;
-            }
-            
-            std::string line;
-            int new_points = 0;
-            int total_lines = 0;
-            
-            while (std::getline(file, line)) {
-                total_lines++;
-                std::cout << "[DEBUG] Line " << total_lines << ": '" << line << "'" << std::endl; // Show first few lines
-                
-                if (!line.empty() && line[0] != '#') {
-                    good_map_points.insert(line);
-                    new_points++;
-                }
-                
-                if (total_lines > 5) break; // Only show first 5 lines for debugging
-            }
-            
-            // Go back and count all lines
-            file.clear();
-            file.seekg(0);
-            int actual_count = 0;
-            while (std::getline(file, line)) {
-                if (!line.empty() && line[0] != '#') {
-                    good_map_points.insert(line);
-                    actual_count++;
-                }
-            }
-            file.close();
-            
-            std::cout << "[DEBUG] Frame " << frame_count << ": " 
-                    << "total_lines=" << total_lines 
-                    << ", valid_points=" << actual_count
-                    << ", set_size=" << good_map_points.size() << std::endl;
+            std::cout << "[DEBUG] Saved intermediate map at frame " << frame_count << std::endl;
         }
 
         // Check for keyboard input (non-blocking)
@@ -1152,19 +1064,6 @@ int main(int argc, char **argv) {
         // Save ORB-SLAM3 map points
         std::cout << "[DEBUG] Saving map points..." << std::endl;
         SLAM.SavePointCloud(folder + "map_points.txt");
-
-        // Save combined map from all intermediate saves
-        std::string combined_file = folder + "map_points_COMBINED.txt";
-        std::ofstream combined(combined_file);
-        combined << "# Combined map points from all intermediate saves\n";
-
-        for (const auto& point_line : good_map_points) {
-            combined << point_line << "\n";
-        }
-        combined.close();
-
-        std::cout << "[DEBUG] Saved COMBINED map with " << good_map_points.size() 
-                << " unique points from all frames" << std::endl;
 
         // Check file size after saving
         std::ifstream check_file(folder + "map_points.txt");
