@@ -1,0 +1,58 @@
+%YAML:1.0
+
+Camera.type: "PinHole"
+
+# Camera calibration parameters (Aurora 930 values)
+Camera.fx: 417.5291
+Camera.fy: 418.4000
+Camera.cx: 314.9391
+Camera.cy: 188.2704
+
+Camera.k1: 0.01
+Camera.k2: -0.05
+Camera.p1: 0.00
+Camera.p2: -0.00
+
+# Camera resolution (Aurora 930)
+Camera.width: 640
+Camera.height: 400
+
+# Camera frames per second
+Camera.fps: 12
+
+# Color order (0: BGR, 1: RGB)
+Camera.RGB: 1
+
+# RGBD specific parameters (old format - CRITICAL for RGB-D)
+DepthMapFactor: 1000.0
+
+# RGB-D baseline parameter (required even for RGB-D mode)
+Camera.bf: 14.51
+
+# Depth threshold
+ThDepth: 2.0
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters
+#--------------------------------------------------------------------------------------------
+
+ORBextractor.nFeatures: 1000
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500.0
