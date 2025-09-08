@@ -556,7 +556,7 @@ private:
 void GenerateMapPointConverter() {
     std::cout << "[MESH] Generating ENHANCED TUBE MESH GENERATOR WITH FRAME DETAIL PRESERVATION..." << std::endl;
     std::string reconstruction_folder = "3D_Reconstruction_Data";
-    std::string folder = "3D_Reconstruction_Data/";
+    std::string folder = "O-dC/3D_Reconstruction_Data/";
     
     std::ofstream script(folder + "tube_mesh_generator.py");
     script << "#!/usr/bin/env python3\n";
