@@ -32,6 +32,8 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
+#include "timestamp_logger.h"
+
 using namespace std;
 
 // YAML file verification function
@@ -192,6 +194,8 @@ private:
 };
 
 SafeResourceManager g_resource_manager;
+
+TimestampLogger g_timestamp_logger("timestamp_log.csv");
 
 // Signal handler function
 void signalHandler(int signum) {
@@ -397,6 +401,26 @@ void debugIMUBuffer(const std::vector<ORB_SLAM3::IMU::Point>& buffer) {
             std::cout << "[IMU_BUFFER_DEBUG] Time range: " << oldest.t 
                      << " to " << newest.t << " (span: " << (newest.t - oldest.t) << "s)" << std::endl;
         }
+    }
+}
+
+bool checkPipelineHealth(std::shared_ptr<ob::Pipeline> pipeline, const std::string& name) {
+    if (!pipeline) {
+        std::cout << "[HEALTH] " << name << " pipeline is null!" << std::endl;
+        return false;
+    }
+    
+    try {
+        // Try to get device info to verify pipeline is alive
+        auto device = pipeline->getDevice();
+        if (!device) {
+            std::cout << "[HEALTH] " << name << " pipeline has no device!" << std::endl;
+            return false;
+        }
+        return true;
+    } catch (const ob::Error& e) {
+        std::cout << "[HEALTH] " << name << " pipeline error: " << e.what() << std::endl;
+        return false;
     }
 }
 
@@ -663,6 +687,7 @@ public:
     std::atomic<bool> imu_running_;
     std::vector<ORB_SLAM3::IMU::Point> imu_buffer_;
     std::mutex imu_buffer_mutex_;
+    std::shared_ptr<ob::Pipeline> imu_pipeline_;
     
 private:
     std::shared_ptr<ob::Context> context_;
@@ -671,7 +696,6 @@ private:
     std::shared_ptr<ob::Align> align_filter_;
     
     // IMU-related members
-    std::shared_ptr<ob::Pipeline> imu_pipeline_;
     std::shared_ptr<ob::Config> imu_config_;
     ImuSyncBuffer imu_sync_buffer_;
     std::thread imu_thread_;
@@ -732,7 +756,7 @@ bool OrbbecCapture::getFrames(cv::Mat& color, cv::Mat& depth, double& timestamp)
         }
         
         std::cout << "[DEBUG] About to call waitForFrames..." << std::endl;
-        auto frameSet = pipeline_->waitForFrames(100);
+        auto frameSet = pipeline_->waitForFrames(1000);
         std::cout << "[DEBUG] waitForFrames returned" << std::endl;
         
         if (!frameSet) {
@@ -896,22 +920,42 @@ bool OrbbecCapture::getFrames(cv::Mat& color, cv::Mat& depth, double& timestamp)
                 std::cout << "[ERROR] OpenCV exception in color processing: " << e.what() << std::endl;
                 return false;
             }
+
+            double color_timestamp = 0.0;
+            double depth_timestamp = 0.0;
+
             try {
-                uint64_t timestamp_us = colorVideoFrame->getTimeStampUs();
-                if (timestamp_us == 0) {
-                    // Use system time as fallback
-                    timestamp = std::chrono::duration<double>(
+                uint64_t color_timestamp_us = colorVideoFrame->getTimeStampUs();
+                uint64_t depth_timestamp_us = depthVideoFrame->getTimeStampUs();
+                
+                if (color_timestamp_us == 0 || depth_timestamp_us == 0) {
+                    // Use system time as fallback for both
+                    auto system_time = std::chrono::duration<double>(
                         std::chrono::steady_clock::now().time_since_epoch()).count();
-                    std::cout << "[WARNING] Using system timestamp as fallback" << std::endl;
+                    color_timestamp = system_time;
+                    depth_timestamp = system_time;
+                    std::cout << "[WARNING] Using system timestamp as fallback for both streams" << std::endl;
                 } else {
-                    timestamp = timestamp_us / 1000000.0;
+                    color_timestamp = color_timestamp_us / 1000000.0;
+                    depth_timestamp = depth_timestamp_us / 1000000.0;
                 }
-                std::cout << "[DEBUG] Timestamp: " << std::fixed << std::setprecision(6) << timestamp << std::endl;
+                
+                // Use the earlier timestamp as the frame timestamp for SLAM
+                timestamp = std::min(color_timestamp, depth_timestamp);
+                
+                std::cout << "[DEBUG] Color TS: " << std::fixed << std::setprecision(6) << color_timestamp 
+                        << ", Depth TS: " << depth_timestamp 
+                        << ", Offset: " << (color_timestamp - depth_timestamp) * 1000 << "ms" << std::endl;
+                
             } catch (const std::exception& e) {
                 std::cout << "[ERROR] Timestamp extraction failed: " << e.what() << std::endl;
                 return false;
             }
-            
+
+            // Log both timestamps separately
+            g_timestamp_logger.logColorFrame(color_timestamp);
+            g_timestamp_logger.logDepthFrame(depth_timestamp);
+                        
             try {
                 cv::Mat depth_temp(depthVideoFrame->getHeight(), depthVideoFrame->getWidth(), 
                                 CV_16UC1, depthData);
@@ -954,14 +998,30 @@ bool OrbbecCapture::getFrames(cv::Mat& color, cv::Mat& depth, double& timestamp)
             }
             
             auto colorVideoFrame = std::dynamic_pointer_cast<ob::ColorFrame>(colorFrame);
-            cv::Mat color_temp(colorVideoFrame->getHeight(), colorVideoFrame->getWidth(), 
-                              CV_8UC3, (void*)colorVideoFrame->getData());
-            cv::cvtColor(color_temp, color, cv::COLOR_RGB2BGR);
-            timestamp = colorVideoFrame->getTimeStampUs() / 1000000.0;
-            
             auto depthVideoFrame = std::dynamic_pointer_cast<ob::DepthFrame>(depthFrame);
+
+            // Get timestamps from both frames first
+            double color_timestamp = colorVideoFrame->getTimeStampUs() / 1000000.0;
+            double depth_timestamp = depthVideoFrame->getTimeStampUs() / 1000000.0;
+
+            // Use the earlier timestamp as the frame timestamp for SLAM
+            timestamp = std::min(color_timestamp, depth_timestamp);
+
+            std::cout << "[DEBUG] SW Align - Color TS: " << std::fixed << std::setprecision(6) << color_timestamp 
+                    << ", Depth TS: " << depth_timestamp 
+                    << ", Offset: " << (color_timestamp - depth_timestamp) * 1000 << "ms" << std::endl;
+
+            // Log both timestamps
+            g_timestamp_logger.logColorFrame(color_timestamp);
+            g_timestamp_logger.logDepthFrame(depth_timestamp);
+
+            // Process frames
+            cv::Mat color_temp(colorVideoFrame->getHeight(), colorVideoFrame->getWidth(), 
+                            CV_8UC3, (void*)colorVideoFrame->getData());
+            cv::cvtColor(color_temp, color, cv::COLOR_RGB2BGR);
+
             cv::Mat rawDepth(depthVideoFrame->getHeight(), depthVideoFrame->getWidth(), 
-                           CV_16UC1, (void*)depthVideoFrame->getData());
+                        CV_16UC1, (void*)depthVideoFrame->getData());
             
             if (debug_this_frame) {
                 std::cout << "[DEBUG] Raw frames - Color: " << color.size() 
@@ -1143,6 +1203,12 @@ void OrbbecCapture::imuThreadFunc() {
                 if (accelData) {
                     auto value = accelData->getValue();
                     double timestamp = accelData->getTimeStampUs() / 1000000.0;
+
+                    // Log accelerometer timestamp (reduced frequency)
+                    static int accel_log_count = 0;
+                    if (++accel_log_count % 10 == 0) {  // Log every 10th sample
+                        g_timestamp_logger.logAccelData(timestamp);
+                    }
                     
                     // CRITICAL: Check for NaN/infinity in raw sensor data
                     if (!std::isfinite(value.x) || !std::isfinite(value.y) || !std::isfinite(value.z) ||
@@ -1180,6 +1246,12 @@ void OrbbecCapture::imuThreadFunc() {
                 if (gyroData) {
                     auto value = gyroData->getValue();
                     double timestamp = gyroData->getTimeStampUs() / 1000000.0;
+
+                    // Log gyroscope timestamp (reduced frequency)
+                    static int gyro_log_count = 0;
+                    if (++gyro_log_count % 10 == 0) {  // Log every 10th sample
+                        g_timestamp_logger.logGyroData(timestamp);
+                    }
                     
                     // CRITICAL: Check for NaN/infinity in raw sensor data
                     if (!std::isfinite(value.x) || !std::isfinite(value.y) || !std::isfinite(value.z) ||
@@ -1431,6 +1503,11 @@ int main(int argc, char **argv) {
 
     std::cout << "[DEBUG] Vocabulary: " << argv[1] << std::endl;
     std::cout << "[DEBUG] Settings: " << argv[2] << std::endl;
+
+    // Initialize timestamp logging
+    if (!g_timestamp_logger.initialize()) {
+        std::cout << "[WARNING] Timestamp logging disabled due to initialization failure" << std::endl;
+    }
 
     // // Verify YAML file before proceeding
     // if (!verifyYAMLFile(argv[2])) {
@@ -1757,6 +1834,24 @@ int main(int argc, char **argv) {
             if (capture.imu_running_) {
                 std::lock_guard<std::mutex> lock(capture.imu_buffer_mutex_);
                 std::cout << "[IMU_HEALTH] Buffer contains " << capture.imu_buffer_.size() << " measurements" << std::endl;
+            }
+        }
+
+        // Add pipeline health monitoring every 50 frames
+        if (frame_count % 50 == 0) {
+            bool video_healthy = checkPipelineHealth(capture.pipeline_, "Video");
+            bool imu_healthy = true;
+            
+            if (capture.imu_pipeline_) {
+                imu_healthy = checkPipelineHealth(capture.imu_pipeline_, "IMU");
+            }
+            
+            if (!video_healthy) {
+                std::cout << "[HEALTH] Video pipeline unhealthy - attempting restart..." << std::endl;
+            }
+            
+            if (!imu_healthy) {
+                std::cout << "[HEALTH] IMU pipeline unhealthy - check IMU thread" << std::endl;
             }
         }
 
