@@ -36,6 +36,27 @@
 
 using namespace std;
 
+// Helper function to create directories
+bool createDirectory(const std::string& path) {
+    struct stat info;
+    if (stat(path.c_str(), &info) != 0) {
+        #ifdef _WIN32
+            return _mkdir(path.c_str()) == 0;
+        #else
+            return mkdir(path.c_str(), 0755) == 0;
+        #endif
+    }
+    return (info.st_mode & S_IFDIR) != 0;
+}
+
+// Helper function to create TUM dataset structure
+bool createTUMStructure(const std::string& basePath) {
+    createDirectory(basePath);
+    createDirectory(basePath + "/rgb");
+    createDirectory(basePath + "/depth");
+    return true;
+}
+
 // YAML file verification function
 bool verifyYAMLFile(const std::string& filename) {
     cv::FileStorage fs;
@@ -428,10 +449,33 @@ class OrbbecCapture {
 public:
     OrbbecCapture(bool use_hardware_align = true) 
         : pipeline_(nullptr), config_(nullptr), use_hw_align_(use_hardware_align), imu_running_(false) {
+        
+        // Create TUM dataset structure
+        datasetPath_ = "./tum_dataset";
+        createTUMStructure(datasetPath_);
+        
+        // Open timestamp files
+        rgbTimestampFile_.open(datasetPath_ + "/rgb.txt");
+        depthTimestampFile_.open(datasetPath_ + "/depth.txt");
+        imuTimestampFile_.open(datasetPath_ + "/imu.txt");
+        
+        // Write TUM format headers
+        rgbTimestampFile_ << "# timestamp filename" << std::endl;
+        depthTimestampFile_ << "# timestamp filename" << std::endl;
+        imuTimestampFile_ << "# timestamp gx gy gz ax ay az" << std::endl;
+        
+        std::cout << "[INFO] TUM dataset recording initialized at: " << datasetPath_ << std::endl;
+
         std::cout << "[DEBUG] Using " << (use_hw_align_ ? "HARDWARE" : "SOFTWARE") << " alignment" << std::endl;
     }
     
     ~OrbbecCapture() {
+        // Close TUM recording files
+        if (rgbTimestampFile_.is_open()) rgbTimestampFile_.close();
+        if (depthTimestampFile_.is_open()) depthTimestampFile_.close();
+        if (imuTimestampFile_.is_open()) imuTimestampFile_.close();
+        std::cout << "[INFO] TUM dataset saved with " << frameCounter_ << " frames" << std::endl;
+
         // Stop IMU thread first
         if (imu_running_) {
             imu_running_ = false;
@@ -703,6 +747,12 @@ private:
     cv::Mat colorK_, depthK_;
     DepthToColorTransform sw_transformer_;
     bool use_hw_align_;
+
+    std::ofstream rgbTimestampFile_;
+    std::ofstream depthTimestampFile_;
+    std::ofstream imuTimestampFile_;
+    std::string datasetPath_;
+    int frameCounter_;
     
     void imuThreadFunc();
 };
@@ -955,6 +1005,35 @@ bool OrbbecCapture::getFrames(cv::Mat& color, cv::Mat& depth, double& timestamp)
             // Log both timestamps separately
             g_timestamp_logger.logColorFrame(color_timestamp);
             g_timestamp_logger.logDepthFrame(depth_timestamp);
+
+            // SAVE RGB FRAME IN TUM FORMAT
+            std::stringstream rgbFilename;
+            rgbFilename << std::fixed << std::setprecision(6) << color_timestamp << ".png";
+            std::string rgbPath = datasetPath_ + "/rgb/" + rgbFilename.str();
+            cv::imwrite(rgbPath, color);
+            rgbTimestampFile_ << std::fixed << std::setprecision(6) 
+                            << color_timestamp << " rgb/" << rgbFilename.str() << std::endl;
+
+            // SAVE DEPTH FRAME IN TUM FORMAT
+            std::stringstream depthFilename;
+            depthFilename << std::fixed << std::setprecision(6) << depth_timestamp << ".png";
+            std::string depthPath = datasetPath_ + "/depth/" + depthFilename.str();
+
+            if (!depth.empty()) {
+                if (cv::imwrite(depthPath, depth)) {
+                    depthTimestampFile_ << std::fixed << std::setprecision(6) 
+                                        << depth_timestamp << " depth/" << depthFilename.str() << std::endl;
+                } else {
+                    std::cout << "[ERROR] Failed to write depth image at " << depth_timestamp << std::endl;
+                }
+            } else {
+                std::cout << "[ERROR] Empty depth frame at timestamp " << depth_timestamp << std::endl;
+            }
+
+            depthTimestampFile_ << std::fixed << std::setprecision(6) 
+                                << depth_timestamp << " depth/" << depthFilename.str() << std::endl;
+
+            frameCounter_++;
                         
             try {
                 cv::Mat depth_temp(depthVideoFrame->getHeight(), depthVideoFrame->getWidth(), 
@@ -1226,6 +1305,9 @@ void OrbbecCapture::imuThreadFunc() {
                     float magnitude = sqrt(value.x*value.x + value.y*value.y + value.z*value.z);
                     if (magnitude > 0.1 && magnitude < 50.0) {
                         Eigen::Vector3f accel(value.x, value.y, value.z);
+
+                        imuTimestampFile_ << accel.x() << " " << accel.y() << " " << accel.z() << std::endl;
+
                         imu_sync_buffer_.addAccel(accel, timestamp);
                         local_accel_count++;
                         processed_data = true;
@@ -1269,6 +1351,9 @@ void OrbbecCapture::imuThreadFunc() {
                     Eigen::Vector3f gyro(value.x * M_PI / 180.0f, 
                                         value.y * M_PI / 180.0f, 
                                         value.z * M_PI / 180.0f);
+
+                    imuTimestampFile_ << std::fixed << std::setprecision(6) << timestamp << " "
+                                      << gyro.x() << " " << gyro.y() << " " << gyro.z() << " ";
                     
                     // Additional validation after conversion
                     if (std::isfinite(gyro.x()) && std::isfinite(gyro.y()) && std::isfinite(gyro.z())) {
@@ -1282,6 +1367,13 @@ void OrbbecCapture::imuThreadFunc() {
             // Get synchronized measurements
             auto complete_measurements = imu_sync_buffer_.getCompleteMeasurements();
             if (!complete_measurements.empty()) {
+                // SAVE TO TUM IMU FILE (synchronized accel+gyro pairs)
+                for (const auto& measurement : complete_measurements) {
+                    imuTimestampFile_ << std::fixed << std::setprecision(6) << measurement.t << " "
+                                    << measurement.w.x() << " " << measurement.w.y() << " " << measurement.w.z() << " "
+                                    << measurement.a.x() << " " << measurement.a.y() << " " << measurement.a.z() << std::endl;
+                }
+                
                 std::lock_guard<std::mutex> lock(imu_buffer_mutex_);
                 for (const auto& measurement : complete_measurements) {
                     // Safety check for NaN values before adding to buffer
